@@ -43,4 +43,4 @@ void free_string(const char *ptr);
 
 void free_vec(void *ptr, size_t length, size_t capacity);
 
-}  // extern "C"
+} // extern "C"
