@@ -4,7 +4,7 @@
 .vscode/settings.json
 .vscode/c_cpp_properties.json
 *.txt
-*/target/*
+target/*
 !params.txt
 .d
 bin/*
