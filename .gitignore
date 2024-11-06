@@ -1,14 +1,1 @@
-<<<<<<< HEAD
-*.[oa]
-*.json
-.vscode/*
-.vscode/settings.json
-.vscode/c_cpp_properties.json
-*.txt
-target/*
-!params.txt
-.d
-bin/*
-=======
 target
->>>>>>> 0819504d2376a068e85687508d09f36382a7edc8
