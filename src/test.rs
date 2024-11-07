@@ -8,7 +8,6 @@ use tarpc::{client, context, tokio_serde::formats::Json};
 async fn main() -> io::Result<()> {
     let systems = vec!["137.150.30.80"];
     let systems_clone = systems.clone();
-
     tokio::spawn(async move {
         let mut signals = Signals::new(TERM_SIGNALS).expect("Failed to create signal handler");
         for sig in signals.forever() {
