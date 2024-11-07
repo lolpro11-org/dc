@@ -1,6 +1,4 @@
-use tokio::io::{self, AsyncBufReadExt, BufReader};
-use tokio::fs::File;
-use std::path::Path;
+use tokio::io::{self};
 use dc::DCClient;
 use std::process;
 use std::time::{Duration, Instant};
@@ -38,18 +36,5 @@ async fn main() -> io::Result<()> {
             println!("{:?}", client.send_binary(ctx, binary_data).await.unwrap());
         }
     }
-    process::exit(0);
     Ok(())
-}
-
-async fn read_first_line<P>(path: P) -> io::Result<String>
-where
-    P: AsRef<Path>,
-{
-    let file = File::open(path).await.unwrap();
-    let reader = BufReader::new(file);
-    if let Some(line_result) = reader.lines().next_line().await.unwrap() {
-        return Ok(line_result);
-    }
-    Err(io::Error::new(io::ErrorKind::UnexpectedEof, "File is empty"))
 }
