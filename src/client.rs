@@ -9,23 +9,8 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use signal_hook::{consts::TERM_SIGNALS, iterator::Signals};
 use tarpc::{client, context, tokio_serde::formats::Json};
 use tokio::task;
-use rand::Rng;
 use tokio::io::AsyncWriteExt;
 use zerocopy::IntoBytes;
-fn maxwellian_distribution(mean: f64, sigma: f64) -> f64 {
-    let mut rng = rand::thread_rng();
-
-    loop {
-        let y = -4.0 + 8.0 * rng.gen::<f64>();
-        let x = rng.gen::<f64>();
-
-        if x > (-y * y / 2.0).exp() {
-            continue;
-        } else {
-            return y * sigma + mean;
-        }
-    }
-}
 
 fn get_std_from_char(c: char) -> f64 {
     let mass_e = 1.0;
@@ -64,7 +49,7 @@ fn get_charge_from_char(c: char) -> f64 {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let systems = vec![/*"137.150.122.146", */"192.168.1.21", "192.168.1.22", "192.168.1.23", "192.168.1.24"];
+    let systems = vec!["192.168.1.21", "192.168.1.22", "192.168.1.23", "192.168.1.24"];
     let systems_clone = systems.clone();
 
     tokio::spawn(async move {
@@ -107,8 +92,8 @@ async fn main() -> io::Result<()> {
     let boltzmann_constant = 1.38e-23;
     let electron_charge = 1.60e-19;
     let electron_mass = 9.11e-31;
-    let T = 3e8;
-    let debye_length = (eps_0 * T * boltzmann_constant / (n_0 * ((electron_charge as f64).powi(2)))).sqrt();
+    let std_temperature = 3e8;
+    let debye_length = (eps_0 * std_temperature * boltzmann_constant / (n_0 * ((electron_charge as f64).powi(2)))).sqrt();
     let plasma_period = (eps_0 * electron_mass / (n_0 * ((electron_charge as f64).powi(2)))).sqrt();
     let n_e = n_0 * debye_length.powi(3);
     let n_01d = n_e.powf(1.0 / 3.0);
@@ -298,7 +283,6 @@ async fn main() -> io::Result<()> {
         }
         println!("Finished Timestep: {}", timestep);
     }
-    process::exit(0);
     Ok(())
 }
 

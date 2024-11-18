@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::net::{IpAddr, Ipv4Addr};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, os::unix::fs::PermissionsExt, path::PathBuf, process, sync::Arc};
 use std::result::Result::Ok;
@@ -204,11 +203,13 @@ async fn main() -> std::io::Result<()> {
             process::exit(1);
         }
     });
-    let server_addr = (IpAddr::V4(Ipv4Addr::LOCALHOST), 9010);
+    //let server_addr = (IpAddr::V4(Ipv4Addr::LOCALHOST), 9010);
+    let server_addr = format!("{}:9010", local_ip().unwrap());
 
     let mut listener = tarpc::serde_transport::tcp::listen(&server_addr, Json::default).await?;
     println!("Listening on port {}", listener.local_addr().port());
     listener.config_mut().max_frame_length(usize::MAX);
+    println!("going to serve on {}:9010", local_ip().unwrap());
     listener
         // Ignore accept errors.
         .filter_map(|r| future::ready(r.ok()))
