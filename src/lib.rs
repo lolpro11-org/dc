@@ -4,7 +4,7 @@ use tokio::{runtime::{self, Runtime}, sync::RwLock};
 use core::ffi::c_char;
 use std::{collections::HashMap, ffi::{c_void, CStr, CString}, panic, sync::Arc};
 static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
-    runtime::Builder::new_multi_thread().build().expect("Failed to create Tokio runtime")
+    runtime::Builder::new_multi_thread().enable_io().build().expect("Failed to create Tokio runtime")
 });
 
 static CLIENTS: Lazy<RwLock<HashMap<String, Arc<DCClient>>>> = Lazy::new(|| {
