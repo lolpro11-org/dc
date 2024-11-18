@@ -1,10 +1,10 @@
 use once_cell::sync::Lazy;
 use tarpc::{client, context, serde_transport::tcp, tokio_serde::formats::Json};
-use tokio::{runtime::Runtime, sync::RwLock};
+use tokio::{runtime::{self, Runtime}, sync::RwLock};
 use core::ffi::c_char;
 use std::{collections::HashMap, ffi::{c_void, CStr, CString}, panic, sync::Arc};
 static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
-    Runtime::new().expect("Failed to create Tokio runtime")
+    runtime::Builder::new_multi_thread().build().expect("Failed to create Tokio runtime")
 });
 
 static CLIENTS: Lazy<RwLock<HashMap<String, Arc<DCClient>>>> = Lazy::new(|| {
