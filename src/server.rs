@@ -59,7 +59,6 @@ impl DC for DCServer {
         tokio::fs::set_permissions(&filename, permissions).await.expect("Failed to set permissions");
         file.write_all(&binary).await.unwrap();
         file.flush().await.unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         self.path.lock().await.insert(filename.clone().into());
         return filename.to_string();
     }
