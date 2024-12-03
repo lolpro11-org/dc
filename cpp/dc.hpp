@@ -125,7 +125,7 @@ void Server::unsafe_removeExec(const std::string& filename) {
 }
 
 void Server::removeExec(const std::string& filename) {
-    std::lock_guard execlock(mut);
+    std::lock_guard execlock(this->mut);
     this->unsafe_removeExec(filename);
 }
 
@@ -133,7 +133,7 @@ void Server::sendExec(const std::string& filename) {
     std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
 
     {
-        std::lock_guard execLock(mut);
+        std::lock_guard execLock(this->mut);
         this->unsafe_removeExec(filename); // the unsafe version is used to prevent deadlocks
         // the RustString is created to offload memory management responsibilities
         this->executables.insert({filename, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str()});
@@ -155,7 +155,7 @@ void Server::unsafe_sendExec(const std::string& filename) {
 std::string Server::runExec(const std::string& filename, const std::string& stdin_str, const std::vector<std::string>& args) {
     std::string execHandle;
     {
-        std::lock_guard execLock(mut);
+        std::lock_guard execLock(this->mut);
         auto iter = this->executables.find(filename);
         if(iter==this->executables.end()) {
             this->unsafe_sendExec(filename);
@@ -190,13 +190,17 @@ template<typename ReturnType, typename... Args> std::future<ReturnType> Server::
 class Client {
     private:
     std::vector<Server> machines;
-    size_t jobNumber;
+    std::vector<size_t> weights;
+    size_t counts;
+    size_t machineIndex;
 
     Server& roundRobinNext();
 
     public:
     Client(const std::vector<Server>&);
+    Client(const std::vector<Server>&, const std::vector<size_t>&);
     Client(std::initializer_list<Server>);
+    Client(std::initializer_list<Server>, std::initializer_list<size_t>);
     Client(Client&&);
     Client& operator=(Client&&);
     Client(const Client&);
@@ -208,24 +212,30 @@ class Client {
     template<typename ReturnType, typename... Args> std::future<ReturnType> roundRobinAsync(const std::string&, const Args&...);
 };
 
-Client::Client(const std::vector<Server>& servers): machines(servers), jobNumber(0) {}
-Client::Client(std::initializer_list<Server> servers): machines(servers), jobNumber(0) {}
+Client::Client(const std::vector<Server>& servers): machines(servers), weights(servers.size(), 1), counts(0), machineIndex(0) {}
+Client::Client(const std::vector<Server>& servers, const std::vector<size_t>& weight): machines(servers), weights(weight), counts(0), machineIndex(0) {}
+Client::Client(std::initializer_list<Server> servers): machines(servers), weights(servers.size(), 1), counts(0), machineIndex(0) {}
+Client::Client(std::initializer_list<Server> servers, std::initializer_list<size_t> weight): machines(servers), weights(weight), counts(0), machineIndex(0) {}
 
-Client::Client(Client&& src): machines(std::move(src.machines)), jobNumber(std::move(src.jobNumber)) {}
+Client::Client(Client&& src): machines(std::move(src.machines)), weights(std::move(src.weights)), counts(std::move(src.counts)), machineIndex(std::move(src.machineIndex)) {}
 
 Client& Client::operator=(Client&& src) {
     if(this==&src) return *this;
     this->machines = std::move(src.machines);
-    this->jobNumber = std::move(src.jobNumber);
+    this->machineIndex = std::move(src.machineIndex);
+    this->weights = std::move(src.weights);
+    this->counts = std::move(src.counts);
     return *this;
 }
 
-Client::Client(const Client& src): machines(src.machines) {}
+Client::Client(const Client& src): machines(src.machines), weights(src.weights), counts(src.counts), machineIndex(src.machineIndex) {}
 
 Client& Client::operator=(const Client& src) {
     if(this==&src) return *this;
     this->machines = src.machines;
-    this->jobNumber = src.jobNumber;
+    this->machineIndex = src.machineIndex;
+    this->weights = src.weights;
+    this->counts = src.counts;
     return *this;
 }
 
@@ -240,9 +250,18 @@ Server& Client::getMachine(const size_t index) {
 }
 
 Server& Client::roundRobinNext() {
-    this->jobNumber++;
-    if(this->jobNumber>=this->numMachines()) this->jobNumber = 0;
-    return this->machines[this->jobNumber];
+    if(this->machineIndex>=this->numMachines()) {
+        this->machineIndex = 0;
+        this->counts = 0;
+    }
+    const size_t machine = this->machineIndex;
+
+    this->counts++;
+    if(this->counts >= this->weights[this->machineIndex]) {
+        this->counts = 0;
+        this->machineIndex++;
+    }
+    return this->machines[machine];
 }
 
 template<typename ReturnType, typename... Args> std::future<ReturnType> Client::roundRobinAsync(const std::string& filename, const Args&... args) {
