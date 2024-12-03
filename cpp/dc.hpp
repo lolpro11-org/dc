@@ -78,6 +78,7 @@ class Server {
     void removeExec(const std::string&);
     std::string runExec(const std::string& filename, const std::string& stdin_str = "", const std::vector<std::string>& args = {});
     template<typename ReturnType, typename... Args> ReturnType runExecAsFunction(const std::string&, const Args&...);
+    template<typename ReturnType, typename... Args> std::future<ReturnType> runExecAsAsyncFunction(const std::string&, const Args&...);
 };
 
 Server::Server(const std::string& ip): IPaddress(ip) {}
@@ -141,35 +142,72 @@ template<typename ReturnType, typename... Args> ReturnType Server::runExecAsFunc
     return serial::deserializeFromString<ReturnType>(this->runExec(filename, serial::serializeToString(args...)));
 }
 
-class Client: public std::vector<Server> {
+template<typename ReturnType, typename... Args> std::future<ReturnType> Server::runExecAsAsyncFunction(const std::string& filename, const Args&... args) {
+    return std::async(std::launch::async, [this](const std::string filename, const Args... lambdaArgs)->ReturnType {
+        return serial::deserializeFromString<ReturnType>(this->runExec(filename, serial::serializeToString(lambdaArgs...)));
+    }, filename, args...);
+}
+
+class Client {
+    private:
+    std::vector<Server> machines;
+    size_t jobNumber;
+
+    Server& roundRobinNext();
+
     public:
     Client(const std::vector<Server>&);
-    Client(Client&&);
     Client(std::initializer_list<Server>);
+    Client(Client&&);
     Client& operator=(Client&&);
+    Client(const Client&);
+    Client& operator=(const Client&);
     ~Client();
 
-    Client& operator=(const Client&) = delete;
-    Client(const Client&) = delete;
+    size_t numMachines() const;
+    Server& getMachine(const size_t);
+    template<typename ReturnType, typename... Args> std::future<ReturnType> roundRobinAsync(const std::string&, const Args&...);
 };
 
-Client::Client(const std::vector<Server>& servers): std::vector<Server>(servers) {}
+Client::Client(const std::vector<Server>& servers): machines(servers), jobNumber(0) {}
+Client::Client(std::initializer_list<Server> servers): machines(servers), jobNumber(0) {}
 
-Client::Client(std::initializer_list<Server> servers): std::vector<Server>(servers) {
-    for(Server server : servers) {
-        this->push_back(server);
-    }
-}
+Client::Client(Client&& src): machines(std::move(src.machines)), jobNumber(std::move(src.jobNumber)) {}
 
-Client::Client(Client&& src): std::vector<Server>(src) {}
 Client& Client::operator=(Client&& src) {
     if(this==&src) return *this;
-    std::vector<Server>::operator=(src);
+    this->machines = std::move(src.machines);
+    this->jobNumber = std::move(src.jobNumber);
     return *this;
 }
+
+Client::Client(const Client& src): machines(src.machines) {}
+
+Client& Client::operator=(const Client& src) {
+    if(this==&src) return *this;
+    this->machines = src.machines;
+    this->jobNumber = src.jobNumber;
+    return *this;
+}
+
 Client::~Client() {}
 
+size_t Client::numMachines() const {
+    return machines.size();
+}
 
+Server& Client::getMachine(const size_t index) {
+    return machines[index];
+}
 
+Server& Client::roundRobinNext() {
+    this->jobNumber++;
+    if(this->jobNumber>=this->numMachines()) this->jobNumber = 0;
+    return machines[this->jobNumber];
+}
+
+template<typename ReturnType, typename... Args> std::future<ReturnType> Client::roundRobinAsync(const std::string& filename, const Args&... args) {
+    return roundRobinNext().runExecAsAsyncFunction<ReturnType, Args...>(filename, args...);
+}
 
 #endif
