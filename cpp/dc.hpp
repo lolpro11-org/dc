@@ -12,6 +12,7 @@
 #include <tuple>
 #include <fstream>
 #include <future>
+#include <mutex>
 
 #include <unistd.h>
 #include <limits.h>
@@ -66,6 +67,11 @@ class Server {
     std::string IPaddress;
     // filenames, executable handles
     std::unordered_map<std::string, std::string> executables;
+    std::mutex mut;
+
+    static std::pair<uint8_t*, size_t> readFile(const std::string&);
+    void unsafe_removeExec(const std::string&);
+    void unsafe_sendExec(const std::string&);
 
     public:
     Server(const std::string&);
@@ -81,9 +87,9 @@ class Server {
     template<typename ReturnType, typename... Args> std::future<ReturnType> runExecAsAsyncFunction(const std::string&, const Args&...);
 };
 
-Server::Server(const std::string& ip): IPaddress(ip) {}
-Server::Server(const Server& src): IPaddress(src.IPaddress), executables(src.executables) {}
-Server::Server(Server&& src): IPaddress(std::move(src.IPaddress)), executables(std::move(src.executables)) {}
+Server::Server(const std::string& ip): IPaddress(ip), executables(), mut() {}
+Server::Server(const Server& src): IPaddress(src.IPaddress), executables(src.executables), mut() {}
+Server::Server(Server&& src): IPaddress(std::move(src.IPaddress)), executables(std::move(src.executables)), mut() {}
 
 Server& Server::operator=(const Server& src) {
     if(this==&src) return *this;
@@ -101,37 +107,70 @@ Server& Server::operator=(Server&& src) {
 
 Server::~Server() {}
 
-void Server::removeExec(const std::string& filename) {
+std::pair<uint8_t*, size_t> Server::readFile(const std::string& filename) {
+    std::ifstream file(filename, std::ios::binary | std::ios::ate);
+    std::streamsize size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    uint8_t*const buffer = new uint8_t[size];
+    file.read((char*)buffer, size);
+    file.close();
+    return std::pair<uint8_t*, size_t>(buffer, size);
+}
+
+void Server::unsafe_removeExec(const std::string& filename) {
     auto iter = this->executables.find(filename);
     if(iter==this->executables.end()) return;
     RustString(c_remove_binary(this->IPaddress.c_str(), iter->second.c_str()));
     this->executables.erase(iter);
 }
 
+void Server::removeExec(const std::string& filename) {
+    std::lock_guard execlock(mut);
+    this->unsafe_removeExec(filename);
+}
+
 void Server::sendExec(const std::string& filename) {
-    std::ifstream file(filename, std::ios::binary | std::ios::ate);
-    std::streamsize size = file.tellg();
-    file.seekg(0, std::ios::beg);
-    // note: should change buffer to a pointer instead of a vector
-    std::vector<uint8_t> buffer(size);
-    file.read((char*)buffer.data(), size);
-    file.close();
-    this->removeExec(filename);
+    std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
+
+    {
+        std::lock_guard execLock(mut);
+        this->unsafe_removeExec(filename); // the unsafe version is used to prevent deadlocks
+        // the RustString is created to offload memory management responsibilities
+        this->executables.insert({filename, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str()});
+    }
+
+    delete[] buffer.first;
+}
+
+void Server::unsafe_sendExec(const std::string& filename) {
+    std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
+
+    this->unsafe_removeExec(filename); // the unsafe version is used to prevent deadlocks
     // the RustString is created to offload memory management responsibilities
-    this->executables.insert({filename, RustString(c_send_binary(this->IPaddress.c_str(), buffer.data(), size)).cpp_str()});
+    this->executables.insert({filename, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str()});
+
+    delete[] buffer.first;
 }
 
 std::string Server::runExec(const std::string& filename, const std::string& stdin_str, const std::vector<std::string>& args) {
-    if(this->executables.find(filename)==this->executables.end()) {
-        this->sendExec(filename);
+    std::string execHandle;
+    {
+        std::lock_guard execLock(mut);
+        auto iter = this->executables.find(filename);
+        if(iter==this->executables.end()) {
+            this->unsafe_sendExec(filename);
+            iter = this->executables.find(filename);
+        }
+        execHandle = iter->second;
     }
-    auto iter = this->executables.find(filename);
+
+    size_t stdoutLength = 0;
     const char** argv = new const char*[args.size()];
     for(size_t i=0; i<args.size(); i++) {
         argv[i] = args[i].c_str();
     }
-    size_t stdoutLength = 0;
-    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), iter->second.c_str(), argv, args.size(), (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength);
+
+    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.c_str(), argv, args.size(), (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength);
     delete[] argv;
     std::string stdout_str((const char*)stdoutVec, stdoutLength);
     free_vec((void*)stdoutVec, (size_t)0, (size_t)0);
@@ -193,17 +232,17 @@ Client& Client::operator=(const Client& src) {
 Client::~Client() {}
 
 size_t Client::numMachines() const {
-    return machines.size();
+    return this->machines.size();
 }
 
 Server& Client::getMachine(const size_t index) {
-    return machines[index];
+    return this->machines[index];
 }
 
 Server& Client::roundRobinNext() {
     this->jobNumber++;
     if(this->jobNumber>=this->numMachines()) this->jobNumber = 0;
-    return machines[this->jobNumber];
+    return this->machines[this->jobNumber];
 }
 
 template<typename ReturnType, typename... Args> std::future<ReturnType> Client::roundRobinAsync(const std::string& filename, const Args&... args) {
