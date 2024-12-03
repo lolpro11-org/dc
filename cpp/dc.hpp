@@ -61,11 +61,53 @@ std::string RustString::cpp_str() const {
     return std::string(this->str);
 }
 
+class Executable {
+    private:
+    std::string IPaddress;
+    void cleanup();
+    public:
+    std::string handle;
+    bool valid;
+    Executable();
+    Executable(const std::string&, const std::string&);
+    Executable(Executable&&);
+    Executable& operator=(Executable&&);
+    ~Executable();
+
+    Executable(const Executable&) = delete;
+    Executable& operator=(const Executable&) = delete;
+};
+
+Executable::Executable(): valid(false) {}
+Executable::Executable(const std::string& ip, const std::string& src): IPaddress(ip), handle(src), valid(true) {}
+Executable::Executable(Executable&& src): IPaddress(std::move(src.IPaddress)), handle(std::move(src.handle)), valid(src.valid) {
+    src.valid = false;
+}
+Executable& Executable::operator=(Executable&& src) {
+    if(this==&src) return *this;
+    this->cleanup();
+    this->handle = std::move(src.handle);
+    this->IPaddress = std::move(src.IPaddress);
+    this->valid = src.valid;
+    src.valid = false;
+    return *this;
+}
+Executable::~Executable() {
+    this->cleanup();
+}
+void Executable::cleanup() {
+    if(!(this->valid)) return;
+    this->valid = false;
+    RustString(c_remove_binary(this->IPaddress.c_str(), this->handle.c_str()));
+}
+
 class Server {
     private:
 
     struct data {
-        std::unordered_map<std::string, std::string> executables; // filenames, executable handles
+        size_t users;
+        std::mutex srvmut;
+        std::unordered_map<std::string, Executable> executables; // filenames, executable handles
         std::unordered_map<std::string, size_t> jobs; // filenames, number of jobs with that filename
     };
 
@@ -75,14 +117,14 @@ class Server {
     static std::unordered_map<std::string, Server::data> servers;
 
     static std::pair<uint8_t*, size_t> readFile(const std::string&);
-    void unsafe_removeExec(const std::string&);
-    void unsafe_sendExec(const std::string&);
+
+    Server::data& getData() const;
+
+    void cleanup();
 
     public:
     Server(const std::string&);
-    Server(Server&&);
     Server(const Server&);
-    Server& operator=(Server&&);
     Server& operator=(const Server&);
     ~Server();
     void sendExec(const std::string&);
@@ -95,25 +137,34 @@ class Server {
 std::mutex Server::datamut;
 std::unordered_map<std::string, Server::data> Server::servers;
 
-Server::Server(const std::string& ip): IPaddress(ip) {}
-
-Server::Server(const Server& src): IPaddress(src.IPaddress) {}
-Server::Server(Server&& src): IPaddress(std::move(src.IPaddress)) {}
+Server::Server(const std::string& ip): IPaddress(ip) {
+    this->getData().users++;
+}
+Server::Server(const Server& src): IPaddress(src.IPaddress) {
+    this->getData().users++;
+}
 
 // treat src as if a move happened
 Server& Server::operator=(const Server& src) {
     if(this==&src) return *this;
+    src.getData().users++;
+    this->cleanup();
     this->IPaddress = src.IPaddress;
+    
     return *this;
 }
 
-Server& Server::operator=(Server&& src) {
-    if(this==&src) return *this;
-    this->IPaddress = std::move(src.IPaddress);
-    return *this;
+void Server::cleanup() {
+    Server::data& serverData = this->getData();
+    std::lock_guard lock(serverData.srvmut);
+    serverData.users--;
+    if(serverData.users!=0) return;
+    serverData.executables.clear();
 }
 
-Server::~Server() {}
+Server::~Server() {
+    this->cleanup();
+}
 
 std::pair<uint8_t*, size_t> Server::readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
@@ -125,55 +176,53 @@ std::pair<uint8_t*, size_t> Server::readFile(const std::string& filename) {
     return std::pair<uint8_t*, size_t>(buffer, size);
 }
 
-void Server::unsafe_removeExec(const std::string& filename) {
-    Server::data& serverData = Server::servers[IPaddress];
+void Server::removeExec(const std::string& filename) {
+    Server::data& serverData = this->getData();
+
+    std::lock_guard lock(serverData.srvmut);
+
     auto iter = serverData.executables.find(filename);
     if(iter==serverData.executables.end()) return;
-    RustString(c_remove_binary(this->IPaddress.c_str(), iter->second.c_str()));
     serverData.executables.erase(iter);
-}
-
-void Server::removeExec(const std::string& filename) {
-    std::lock_guard lock(Server::datamut);
-    this->unsafe_removeExec(filename);
 }
 
 void Server::sendExec(const std::string& filename) {
     std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
 
     {
-        Server::data& serverData = Server::servers[IPaddress];
-        std::lock_guard lock(Server::datamut);
-        this->unsafe_removeExec(filename); // the unsafe version is used to prevent deadlocks
+        Server::data& serverData = this->getData();
+        std::lock_guard lock(serverData.srvmut);
+    
+        auto iter = serverData.executables.find(filename);
+        if(iter!=serverData.executables.end()) {
+            serverData.executables.erase(iter);
+        }
         // the RustString is created to offload memory management responsibilities
-        serverData.executables.insert({filename, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str()});
+        serverData.executables.emplace(filename, std::move(Executable(this->IPaddress, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str())));
     }
-
-    delete[] buffer.first;
-}
-
-void Server::unsafe_sendExec(const std::string& filename) {
-    std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
-
-    this->unsafe_removeExec(filename); // the unsafe version is used to prevent deadlocks
-    // the RustString is created to offload memory management responsibilities
-    Server::servers[IPaddress].executables.insert({filename, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str()});
 
     delete[] buffer.first;
 }
 
 std::string Server::runExec(const std::string& filename, const std::string& stdin_str, const std::vector<std::string>& args) {
-    std::string execHandle;
+    Server::data& serverData = this->getData();
+
+    std::unordered_map<std::string, Executable>::iterator iter;
     {
-        std::lock_guard lock(Server::datamut);
-        Server::data& serverData = Server::servers[IPaddress];
-        auto iter = serverData.executables.find(filename);
+        std::lock_guard lock(serverData.srvmut);
+        iter = serverData.executables.find(filename);
         if(iter==serverData.executables.end()) {
-            this->unsafe_sendExec(filename);
+            std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
+
+            // the RustString is created to offload memory management responsibilities
+            serverData.executables.emplace(filename, std::move(Executable(this->IPaddress, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str())));
+
+            delete[] buffer.first;
+
             iter = serverData.executables.find(filename);
         }
-        execHandle = iter->second;
     }
+    Executable& execHandle = iter->second;
 
     size_t stdoutLength = 0;
     const char** argv = new const char*[args.size()];
@@ -182,14 +231,12 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
     }
 
     {
-        Server::data& serverData = Server::servers[IPaddress];
-        std::lock_guard lock(Server::datamut);
+        std::lock_guard lock(serverData.srvmut);
         serverData.jobs[filename]++;
     }
-    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.c_str(), argv, args.size(), (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength);
+    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.handle.c_str(), argv, args.size(), (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength);
     {
-        Server::data& serverData = Server::servers[IPaddress];
-        std::lock_guard lock(Server::datamut);
+        std::lock_guard lock(serverData.srvmut);
         if(serverData.jobs[filename]>0) serverData.jobs[filename]--;
     }
     delete[] argv;
@@ -207,13 +254,18 @@ template<typename ReturnType, typename... Args> std::future<ReturnType> Server::
 }
 
 size_t Server::getNumJobs() const {
-    Server::data& serverData = Server::servers[IPaddress];
+    Server::data& serverData = this->getData();
     std::lock_guard lock(Server::datamut);
     size_t total = 0;
     for(const std::pair<const std::string, size_t>& executableNames : serverData.jobs) {
         total += executableNames.second;
     }
     return total;
+}
+
+Server::data& Server::getData() const {
+    std::lock_guard lock(Server::datamut);
+    return Server::servers[this->IPaddress];
 }
 
 class Client {
@@ -230,8 +282,6 @@ class Client {
     Client(const std::vector<Server>&, const std::vector<size_t>&);
     Client(std::initializer_list<Server>);
     Client(std::initializer_list<Server>, std::initializer_list<size_t>);
-    Client(Client&&);
-    Client& operator=(Client&&);
     Client(const Client&);
     Client& operator=(const Client&);
     ~Client();
@@ -245,17 +295,6 @@ Client::Client(const std::vector<Server>& servers): machines(servers), weights(s
 Client::Client(const std::vector<Server>& servers, const std::vector<size_t>& weight): machines(servers), weights(weight), counts(0), machineIndex(0) {}
 Client::Client(std::initializer_list<Server> servers): machines(servers), weights(servers.size(), 1), counts(0), machineIndex(0) {}
 Client::Client(std::initializer_list<Server> servers, std::initializer_list<size_t> weight): machines(servers), weights(weight), counts(0), machineIndex(0) {}
-
-Client::Client(Client&& src): machines(std::move(src.machines)), weights(std::move(src.weights)), counts(std::move(src.counts)), machineIndex(std::move(src.machineIndex)) {}
-
-Client& Client::operator=(Client&& src) {
-    if(this==&src) return *this;
-    this->machines = std::move(src.machines);
-    this->machineIndex = std::move(src.machineIndex);
-    this->weights = std::move(src.weights);
-    this->counts = std::move(src.counts);
-    return *this;
-}
 
 Client::Client(const Client& src): machines(src.machines), weights(src.weights), counts(src.counts), machineIndex(src.machineIndex) {}
 
