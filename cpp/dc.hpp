@@ -57,17 +57,22 @@ RustString::~RustString() {
 const char* RustString::c_str() const {
     return this->str;
 }
-
 std::string RustString::cpp_str() const {
     return std::string(this->str);
 }
 
 class Server {
     private:
+
+    struct data {
+        std::unordered_map<std::string, std::string> executables; // filenames, executable handles
+        std::unordered_map<std::string, size_t> jobs; // filenames, number of jobs with that filename
+    };
+
     std::string IPaddress;
-    // filenames, executable handles
-    std::unordered_map<std::string, std::string> executables;
-    std::mutex mut;
+
+    static std::mutex datamut;
+    static std::unordered_map<std::string, Server::data> servers;
 
     static std::pair<uint8_t*, size_t> readFile(const std::string&);
     void unsafe_removeExec(const std::string&);
@@ -76,8 +81,8 @@ class Server {
     public:
     Server(const std::string&);
     Server(Server&&);
-    Server& operator=(Server&&);
     Server(const Server&);
+    Server& operator=(Server&&);
     Server& operator=(const Server&);
     ~Server();
     void sendExec(const std::string&);
@@ -85,23 +90,26 @@ class Server {
     std::string runExec(const std::string& filename, const std::string& stdin_str = "", const std::vector<std::string>& args = {});
     template<typename ReturnType, typename... Args> ReturnType runExecAsFunction(const std::string&, const Args&...);
     template<typename ReturnType, typename... Args> std::future<ReturnType> runExecAsAsyncFunction(const std::string&, const Args&...);
+    size_t getNumJobs() const;
 };
+std::mutex Server::datamut;
+std::unordered_map<std::string, Server::data> Server::servers;
 
-Server::Server(const std::string& ip): IPaddress(ip), executables(), mut() {}
-Server::Server(const Server& src): IPaddress(src.IPaddress), executables(src.executables), mut() {}
-Server::Server(Server&& src): IPaddress(std::move(src.IPaddress)), executables(std::move(src.executables)), mut() {}
+Server::Server(const std::string& ip): IPaddress(ip) {}
 
+Server::Server(const Server& src): IPaddress(src.IPaddress) {}
+Server::Server(Server&& src): IPaddress(std::move(src.IPaddress)) {}
+
+// treat src as if a move happened
 Server& Server::operator=(const Server& src) {
     if(this==&src) return *this;
     this->IPaddress = src.IPaddress;
-    this->executables = src.executables;
     return *this;
 }
 
 Server& Server::operator=(Server&& src) {
     if(this==&src) return *this;
     this->IPaddress = std::move(src.IPaddress);
-    this->executables = std::move(src.executables);
     return *this;
 }
 
@@ -118,14 +126,15 @@ std::pair<uint8_t*, size_t> Server::readFile(const std::string& filename) {
 }
 
 void Server::unsafe_removeExec(const std::string& filename) {
-    auto iter = this->executables.find(filename);
-    if(iter==this->executables.end()) return;
+    Server::data& serverData = Server::servers[IPaddress];
+    auto iter = serverData.executables.find(filename);
+    if(iter==serverData.executables.end()) return;
     RustString(c_remove_binary(this->IPaddress.c_str(), iter->second.c_str()));
-    this->executables.erase(iter);
+    serverData.executables.erase(iter);
 }
 
 void Server::removeExec(const std::string& filename) {
-    std::lock_guard execlock(this->mut);
+    std::lock_guard lock(Server::datamut);
     this->unsafe_removeExec(filename);
 }
 
@@ -133,10 +142,11 @@ void Server::sendExec(const std::string& filename) {
     std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
 
     {
-        std::lock_guard execLock(this->mut);
+        Server::data& serverData = Server::servers[IPaddress];
+        std::lock_guard lock(Server::datamut);
         this->unsafe_removeExec(filename); // the unsafe version is used to prevent deadlocks
         // the RustString is created to offload memory management responsibilities
-        this->executables.insert({filename, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str()});
+        serverData.executables.insert({filename, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str()});
     }
 
     delete[] buffer.first;
@@ -147,7 +157,7 @@ void Server::unsafe_sendExec(const std::string& filename) {
 
     this->unsafe_removeExec(filename); // the unsafe version is used to prevent deadlocks
     // the RustString is created to offload memory management responsibilities
-    this->executables.insert({filename, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str()});
+    Server::servers[IPaddress].executables.insert({filename, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str()});
 
     delete[] buffer.first;
 }
@@ -155,11 +165,12 @@ void Server::unsafe_sendExec(const std::string& filename) {
 std::string Server::runExec(const std::string& filename, const std::string& stdin_str, const std::vector<std::string>& args) {
     std::string execHandle;
     {
-        std::lock_guard execLock(this->mut);
-        auto iter = this->executables.find(filename);
-        if(iter==this->executables.end()) {
+        std::lock_guard lock(Server::datamut);
+        Server::data& serverData = Server::servers[IPaddress];
+        auto iter = serverData.executables.find(filename);
+        if(iter==serverData.executables.end()) {
             this->unsafe_sendExec(filename);
-            iter = this->executables.find(filename);
+            iter = serverData.executables.find(filename);
         }
         execHandle = iter->second;
     }
@@ -170,7 +181,17 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
         argv[i] = args[i].c_str();
     }
 
+    {
+        Server::data& serverData = Server::servers[IPaddress];
+        std::lock_guard lock(Server::datamut);
+        serverData.jobs[filename]++;
+    }
     const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.c_str(), argv, args.size(), (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength);
+    {
+        Server::data& serverData = Server::servers[IPaddress];
+        std::lock_guard lock(Server::datamut);
+        if(serverData.jobs[filename]>0) serverData.jobs[filename]--;
+    }
     delete[] argv;
     std::string stdout_str((const char*)stdoutVec, stdoutLength);
     free_vec((void*)stdoutVec, (size_t)0, (size_t)0);
@@ -182,9 +203,17 @@ template<typename ReturnType, typename... Args> ReturnType Server::runExecAsFunc
 }
 
 template<typename ReturnType, typename... Args> std::future<ReturnType> Server::runExecAsAsyncFunction(const std::string& filename, const Args&... args) {
-    return std::async(std::launch::async, [this](const std::string filename, const Args... lambdaArgs)->ReturnType {
-        return serial::deserializeFromString<ReturnType>(this->runExec(filename, serial::serializeToString(lambdaArgs...)));
-    }, filename, args...);
+    return std::async(std::launch::async, &Server::runExecAsFunction<ReturnType, Args...>, *this, filename, args...);
+}
+
+size_t Server::getNumJobs() const {
+    Server::data& serverData = Server::servers[IPaddress];
+    std::lock_guard lock(Server::datamut);
+    size_t total = 0;
+    for(const std::pair<const std::string, size_t>& executableNames : serverData.jobs) {
+        total += executableNames.second;
+    }
+    return total;
 }
 
 class Client {
