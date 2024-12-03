@@ -61,55 +61,12 @@ std::string RustString::cpp_str() const {
     return std::string(this->str);
 }
 
-class Executable {
-    private:
-    std::string IPaddress;
-    void cleanup();
-    public:
-    std::string handle;
-    bool valid;
-    Executable();
-    Executable(const std::string&, const std::string&);
-    Executable(Executable&&);
-    Executable& operator=(Executable&&);
-    ~Executable();
 
-    Executable(const Executable&) = delete;
-    Executable& operator=(const Executable&) = delete;
-};
-
-Executable::Executable(): valid(false) {}
-Executable::Executable(const std::string& ip, const std::string& src): IPaddress(ip), handle(src), valid(true) {}
-Executable::Executable(Executable&& src): IPaddress(std::move(src.IPaddress)), handle(std::move(src.handle)), valid(src.valid) {
-    src.valid = false;
-}
-Executable& Executable::operator=(Executable&& src) {
-    if(this==&src) return *this;
-    this->cleanup();
-    this->handle = std::move(src.handle);
-    this->IPaddress = std::move(src.IPaddress);
-    this->valid = src.valid;
-    src.valid = false;
-    return *this;
-}
-Executable::~Executable() {
-    this->cleanup();
-}
-void Executable::cleanup() {
-    if(!(this->valid)) return;
-    this->valid = false;
-    RustString(c_remove_binary(this->IPaddress.c_str(), this->handle.c_str()));
-}
 
 class Server {
     private:
-
-    struct data {
-        size_t users;
-        std::mutex srvmut;
-        std::unordered_map<std::string, Executable> executables; // filenames, executable handles
-        std::unordered_map<std::string, size_t> jobs; // filenames, number of jobs with that filename
-    };
+    class Executable;
+    struct data;
 
     std::string IPaddress;
 
@@ -117,7 +74,6 @@ class Server {
     static std::unordered_map<std::string, Server::data> servers;
 
     static std::pair<uint8_t*, size_t> readFile(const std::string&);
-
     Server::data& getData() const;
 
     void cleanup();
@@ -134,6 +90,61 @@ class Server {
     template<typename ReturnType, typename... Args> std::future<ReturnType> runExecAsAsyncFunction(const std::string&, const Args&...);
     size_t getNumJobs() const;
 };
+
+class Server::Executable {
+    private:
+    std::string IPaddress;
+    std::string handle;
+    bool valid;
+
+    void cleanup();
+
+    public:
+    const char* c_str() const;
+    
+    Executable();
+    Executable(const std::string&, const std::string&);
+    Executable(Executable&&);
+    Executable& operator=(Executable&&);
+    ~Executable();
+
+    Executable(const Executable&) = delete;
+    Executable& operator=(const Executable&) = delete;
+};
+
+struct Server::data {
+    size_t users;
+    std::mutex srvmut;
+    std::unordered_map<std::string, Executable> executables; // filenames, executable handles
+    std::unordered_map<std::string, size_t> jobs; // filenames, number of jobs with that filename
+};
+
+Server::Executable::Executable(): valid(false) {}
+Server::Executable::Executable(const std::string& ip, const std::string& src): IPaddress(ip), handle(src), valid(true) {}
+Server::Executable::Executable(Server::Executable&& src): IPaddress(std::move(src.IPaddress)), handle(std::move(src.handle)), valid(src.valid) {
+    src.valid = false;
+}
+Server::Executable& Server::Executable::operator=(Server::Executable&& src) {
+    if(this==&src) return *this;
+    this->cleanup();
+    this->handle = std::move(src.handle);
+    this->IPaddress = std::move(src.IPaddress);
+    this->valid = src.valid;
+    src.valid = false;
+    return *this;
+}
+Server::Executable::~Executable() {
+    this->cleanup();
+}
+void Server::Executable::cleanup() {
+    if(!(this->valid)) return;
+    this->valid = false;
+    RustString(c_remove_binary(this->IPaddress.c_str(), this->handle.c_str()));
+}
+const char* Server::Executable::c_str() const {
+    return this->handle.c_str();
+}
+
 std::mutex Server::datamut;
 std::unordered_map<std::string, Server::data> Server::servers;
 
@@ -186,6 +197,8 @@ void Server::removeExec(const std::string& filename) {
     serverData.executables.erase(iter);
 }
 
+// note, the buffer is created before the mutex is locked, which may lead to increased memory usage
+// a fix would be to put it after the lock, but that would mean the file reading is no longer done in parallel
 void Server::sendExec(const std::string& filename) {
     std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
 
@@ -222,7 +235,7 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
             iter = serverData.executables.find(filename);
         }
     }
-    Executable& execHandle = iter->second;
+    Server::Executable& execHandle = iter->second;
 
     size_t stdoutLength = 0;
     const char** argv = new const char*[args.size()];
@@ -234,7 +247,7 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
         std::lock_guard lock(serverData.srvmut);
         serverData.jobs[filename]++;
     }
-    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.handle.c_str(), argv, args.size(), (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength);
+    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.c_str(), argv, args.size(), (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength);
     {
         std::lock_guard lock(serverData.srvmut);
         if(serverData.jobs[filename]>0) serverData.jobs[filename]--;
