@@ -4,19 +4,9 @@
 #include <unordered_map>
 #include <vector>
 #include <string>
-#include <stdlib.h>
-#include <string.h>
-#include <iostream>
-#include <sstream>
-#include <functional>
-#include <tuple>
 #include <fstream>
 #include <future>
 #include <mutex>
-
-#include <unistd.h>
-#include <limits.h>
-#include <iostream>
 
 #include "serialize.hpp"
 #include "../my_header.h"
@@ -116,7 +106,7 @@ struct Server::data {
     size_t users;
     std::mutex srvmut;
     std::unordered_map<std::string, Executable> executables; // filenames, executable handles
-    std::unordered_map<std::string, size_t> jobs; // filenames, number of jobs with that filename
+    size_t numJobs;
 };
 
 Server::Executable::Executable(): valid(false) {}
@@ -200,10 +190,10 @@ void Server::removeExec(const std::string& filename) {
 // note, the buffer is created before the mutex is locked, which may lead to increased memory usage
 // a fix would be to put it after the lock, but that would mean the file reading is no longer done in parallel
 void Server::sendExec(const std::string& filename) {
-    std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
+    Server::data& serverData = this->getData();
 
+    std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
     {
-        Server::data& serverData = this->getData();
         std::lock_guard lock(serverData.srvmut);
     
         auto iter = serverData.executables.find(filename);
@@ -245,12 +235,12 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
 
     {
         std::lock_guard lock(serverData.srvmut);
-        serverData.jobs[filename]++;
+        serverData.numJobs++;
     }
     const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.c_str(), argv, args.size(), (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength);
     {
         std::lock_guard lock(serverData.srvmut);
-        if(serverData.jobs[filename]>0) serverData.jobs[filename]--;
+        if(serverData.numJobs>0) serverData.numJobs--;
     }
     delete[] argv;
     std::string stdout_str((const char*)stdoutVec, stdoutLength);
@@ -267,13 +257,7 @@ template<typename ReturnType, typename... Args> std::future<ReturnType> Server::
 }
 
 size_t Server::getNumJobs() const {
-    Server::data& serverData = this->getData();
-    std::lock_guard lock(Server::datamut);
-    size_t total = 0;
-    for(const std::pair<const std::string, size_t>& executableNames : serverData.jobs) {
-        total += executableNames.second;
-    }
-    return total;
+    return Server::servers[this->IPaddress].numJobs;
 }
 
 Server::data& Server::getData() const {
@@ -284,17 +268,12 @@ Server::data& Server::getData() const {
 class Client {
     private:
     std::vector<Server> machines;
-    std::vector<size_t> weights;
-    size_t counts;
-    size_t machineIndex;
 
-    Server& roundRobinNext();
+    Server& leastConnections();
 
     public:
     Client(const std::vector<Server>&);
-    Client(const std::vector<Server>&, const std::vector<size_t>&);
     Client(std::initializer_list<Server>);
-    Client(std::initializer_list<Server>, std::initializer_list<size_t>);
     Client(const Client&);
     Client& operator=(const Client&);
     ~Client();
@@ -304,19 +283,14 @@ class Client {
     template<typename ReturnType, typename... Args> std::future<ReturnType> roundRobinAsync(const std::string&, const Args&...);
 };
 
-Client::Client(const std::vector<Server>& servers): machines(servers), weights(servers.size(), 1), counts(0), machineIndex(0) {}
-Client::Client(const std::vector<Server>& servers, const std::vector<size_t>& weight): machines(servers), weights(weight), counts(0), machineIndex(0) {}
-Client::Client(std::initializer_list<Server> servers): machines(servers), weights(servers.size(), 1), counts(0), machineIndex(0) {}
-Client::Client(std::initializer_list<Server> servers, std::initializer_list<size_t> weight): machines(servers), weights(weight), counts(0), machineIndex(0) {}
+Client::Client(const std::vector<Server>& servers): machines(servers) {}
+Client::Client(std::initializer_list<Server> servers): machines(servers) {}
 
-Client::Client(const Client& src): machines(src.machines), weights(src.weights), counts(src.counts), machineIndex(src.machineIndex) {}
+Client::Client(const Client& src): machines(src.machines) {}
 
 Client& Client::operator=(const Client& src) {
     if(this==&src) return *this;
     this->machines = src.machines;
-    this->machineIndex = src.machineIndex;
-    this->weights = src.weights;
-    this->counts = src.counts;
     return *this;
 }
 
@@ -330,23 +304,20 @@ Server& Client::getMachine(const size_t index) {
     return this->machines[index];
 }
 
-Server& Client::roundRobinNext() {
-    if(this->machineIndex>=this->numMachines()) {
-        this->machineIndex = 0;
-        this->counts = 0;
+Server& Client::leastConnections() {
+    size_t minJobs = machines[0].getNumJobs();
+    size_t minIter = 0;
+    for(size_t i=1; i<machines.size(); i++) {
+        const size_t numJobs = machines[i].getNumJobs();
+        if(minJobs <= numJobs) continue;
+        minJobs = numJobs;
+        minIter = i;
     }
-    const size_t machine = this->machineIndex;
-
-    this->counts++;
-    if(this->counts >= this->weights[this->machineIndex]) {
-        this->counts = 0;
-        this->machineIndex++;
-    }
-    return this->machines[machine];
+    return machines[minIter];
 }
 
 template<typename ReturnType, typename... Args> std::future<ReturnType> Client::roundRobinAsync(const std::string& filename, const Args&... args) {
-    return roundRobinNext().runExecAsAsyncFunction<ReturnType, Args...>(filename, args...);
+    return leastConnections().runExecAsAsyncFunction<ReturnType, Args...>(filename, args...);
 }
 
 #endif

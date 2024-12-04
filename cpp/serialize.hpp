@@ -1,6 +1,5 @@
 #ifndef serialize_hpp
 #define serialize_hpp
-#include <iostream>
 #include <vector>
 #include <string>
 #include <sstream>
