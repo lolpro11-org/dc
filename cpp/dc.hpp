@@ -27,8 +27,8 @@ class Server {
     Server(const Server&);
     Server& operator=(const Server&);
     ~Server();
-    void sendExec(const std::string&);
-    void removeExec(const std::string&);
+    void sendExec(const std::string&) const;
+    void removeExec(const std::string&) const;
     std::string runExec(const std::string& filename, const std::string& stdin_str = "", const std::vector<std::string>& args = {});
     template<typename ReturnType, typename... Args> ReturnType runExecAsFunction(const std::string&, const Args&...);
     template<typename ReturnType, typename... Args> std::future<ReturnType> runExecAsAsyncFunction(const std::string&, const Args&...);

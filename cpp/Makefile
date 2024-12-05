@@ -6,13 +6,13 @@ FLAGS = $(OPTIMIZATIONS) $(CPPVERSION) $(WARNINGS)
 main: libdc_cpp.a
 libdc.a:
 	cd ../ && make
-dc_cpp.o:
-	g++ -c dc.cpp $(FLAGS) -o dc_cpp.o
-libdc_cpp.a: dc_cpp.o libdc.a
+dc.o:
+	g++ -c dc.cpp $(FLAGS) -o dc.o
+libdc_cpp.a: dc.o libdc.a
 	cp ../target/release/libdc.a libdc_cpp.a
-	ar r libdc_cpp.a dc_cpp.o
+	ar r libdc_cpp.a dc.o
 clean:
-	rm dc_cpp.o
+	rm dc.o
 	rm libdc_cpp.a
 	(cd ../ && make clean)
-.PHONY: libdc.a libdc_cpp.a dc_cpp.o main
+.PHONY: libdc.a libdc_cpp.a main

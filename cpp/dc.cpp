@@ -92,9 +92,9 @@ const char* Server::Executable::c_str() const {
 
 struct Server::data {
     size_t users;
+    size_t numJobs;
     std::mutex srvmut;
     std::unordered_map<std::string, Executable> executables; // filenames, executable handles
-    size_t numJobs;
 };
 
 Server::Server() {
@@ -119,8 +119,7 @@ Server& Server::operator=(const Server& src) {
 void Server::cleanup() {
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.srvmut);
-    serverData.users--;
-    if(serverData.users!=0) return;
+    if(--serverData.users!=0) return;
     serverData.executables.clear();
 }
 
@@ -130,7 +129,7 @@ Server::~Server() {
 
 std::pair<uint8_t*, size_t> Server::readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
-    std::streamsize size = file.tellg();
+    const std::streamsize size = file.tellg();
     file.seekg(0, std::ios::beg);
     uint8_t*const buffer = new uint8_t[size];
     file.read((char*)buffer, size);
@@ -138,27 +137,27 @@ std::pair<uint8_t*, size_t> Server::readFile(const std::string& filename) {
     return std::pair<uint8_t*, size_t>(buffer, size);
 }
 
-void Server::removeExec(const std::string& filename) {
+void Server::removeExec(const std::string& filename) const {
     Server::data& serverData = this->getData();
 
     std::lock_guard lock(serverData.srvmut);
 
-    auto iter = serverData.executables.find(filename);
-    if(iter==serverData.executables.end()) return;
+    std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
+    if(iter==serverData.executables.cend()) return;
     serverData.executables.erase(iter);
 }
 
 // note, the buffer is created before the mutex is locked, which may lead to increased memory usage
 // a fix would be to put it after the lock, but that would mean the file reading is no longer done in parallel
-void Server::sendExec(const std::string& filename) {
+void Server::sendExec(const std::string& filename) const {
     Server::data& serverData = this->getData();
 
     std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
     {
         std::lock_guard lock(serverData.srvmut);
     
-        auto iter = serverData.executables.find(filename);
-        if(iter!=serverData.executables.end()) {
+        std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
+        if(iter!=serverData.executables.cend()) {
             serverData.executables.erase(iter);
         }
         // the RustString is created to offload memory management responsibilities
@@ -175,7 +174,7 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
     {
         std::lock_guard lock(serverData.srvmut);
         iter = serverData.executables.find(filename);
-        if(iter==serverData.executables.end()) {
+        if(iter==serverData.executables.cend()) {
             std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
 
             // the RustString is created to offload memory management responsibilities
