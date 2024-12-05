@@ -2,6 +2,8 @@
 #define DC_TPP
 #include "dc.hpp"
 
+#include "serialize.hpp"
+
 template<typename ReturnType, typename... Args> ReturnType Server::runExecAsFunction(const std::string& filename, const Args&... args) {
     return serial::deserializeFromString<ReturnType>(this->runExec(filename, serial::serializeToString(args...)));
 }

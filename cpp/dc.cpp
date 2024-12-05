@@ -1,5 +1,22 @@
 #include "dc.hpp"
-#include "dc.tpp"
+
+#include "../my_header.h"
+
+class RustString {
+    private:
+    const char* str;
+
+    public:
+    RustString(const char*);
+    RustString(RustString&&);
+    ~RustString();
+    RustString& operator=(RustString&&);
+    const char* c_str() const;
+    std::string cpp_str() const;
+
+    RustString(const RustString&) = delete;
+    RustString& operator=(const RustString&) = delete;
+};
 
 RustString::RustString(const char* rstr) {
     this->str = rstr;
@@ -26,6 +43,26 @@ std::string RustString::cpp_str() const {
     return std::string(this->str);
 }
 
+class Server::Executable {
+    private:
+    std::string IPaddress;
+    std::string handle;
+    bool valid;
+
+    void cleanup();
+
+    public:
+    const char* c_str() const;
+    
+    Executable();
+    Executable(const std::string&, const std::string&);
+    Executable(Executable&&);
+    Executable& operator=(Executable&&);
+    ~Executable();
+
+    Executable(const Executable&) = delete;
+    Executable& operator=(const Executable&) = delete;
+};
 
 Server::Executable::Executable(): valid(false) {}
 Server::Executable::Executable(const std::string& ip, const std::string& src): IPaddress(ip), handle(src), valid(true) {}
@@ -53,8 +90,12 @@ const char* Server::Executable::c_str() const {
     return this->handle.c_str();
 }
 
-std::mutex Server::datamut;
-std::unordered_map<std::string, Server::data>* Server::servers = nullptr;
+struct Server::data {
+    size_t users;
+    std::mutex srvmut;
+    std::unordered_map<std::string, Executable> executables; // filenames, executable handles
+    size_t numJobs;
+};
 
 Server::Server() {
     this->getData().users++;
@@ -72,7 +113,6 @@ Server& Server::operator=(const Server& src) {
     src.getData().users++;
     this->cleanup();
     this->IPaddress = src.IPaddress;
-    
     return *this;
 }
 
@@ -170,19 +210,22 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
 }
 
 size_t Server::getNumJobs() const {
-    return this->unsafe_getData().numJobs;
+    return this->getData().numJobs;
 }
-
-Server::data& Server::unsafe_getData() const {
-    return (*(Server::servers))[this->IPaddress];
-}
-
+ 
 Server::data& Server::getData() const {
-    std::lock_guard lock(Server::datamut);
-    if(Server::servers==nullptr) {
-        Server::servers = new std::unordered_map<std::string, Server::data>;
-    }
-    return this->unsafe_getData();
+    static std::mutex datamut; // initalization is thread safe
+
+    // servers was initially a static member of the class Server,
+    // but it was the victim of the Static Initialization Order Fiasco.
+    // to fix this, its a static variable only accessible by this function.
+    // so now it is only initalized when it is first required
+    // long story short, this prevents a Floating Point Exception error.
+
+    static std::unordered_map<std::string, Server::data> servers;
+
+    std::lock_guard lock(datamut);
+    return servers[this->IPaddress];
 }
 
 Client::Client(const std::vector<Server>& servers): machines(servers) {}
