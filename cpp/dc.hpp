@@ -1,12 +1,9 @@
 #ifndef DC_HPP
 #define DC_HPP
 
-#include <unordered_map>
 #include <vector>
 #include <string>
-#include <fstream>
 #include <future>
-#include <mutex>
 
 class Server {
     private:

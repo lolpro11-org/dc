@@ -5,7 +5,7 @@ WARNINGS = -Wno-unused-function -Wall -Wextra -pedantic -Wfatal-errors
 FLAGS = $(OPTIMIZATIONS) $(CPPVERSION) $(WARNINGS)
 main: libdc_cpp.a
 libdc.a:
-	cd ../ && make
+	cd ../ && $(MAKE)
 dc.o:
 	g++ -c dc.cpp $(FLAGS) -o dc.o
 libdc_cpp.a: dc.o libdc.a
@@ -14,5 +14,5 @@ libdc_cpp.a: dc.o libdc.a
 clean:
 	rm dc.o
 	rm libdc_cpp.a
-	(cd ../ && make clean)
+	(cd ../ && $(MAKE) clean)
 .PHONY: libdc.a libdc_cpp.a main
