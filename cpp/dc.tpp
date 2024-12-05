@@ -12,7 +12,7 @@ template<typename ReturnType, typename... Args> std::future<ReturnType> Server::
     return std::async(std::launch::async, &Server::runExecAsFunction<ReturnType, Args...>, *this, filename, args...);
 }
 
-template<typename ReturnType, typename... Args> std::future<ReturnType> Client::roundRobinAsync(const std::string& filename, const Args&... args) {
+template<typename ReturnType, typename... Args> std::future<ReturnType> Client::distributeAndRun(const std::string& filename, const Args&... args) {
     return leastConnections().runExecAsAsyncFunction<ReturnType, Args...>(filename, args...);
 }
 

@@ -28,6 +28,7 @@ class Server {
     void removeExec(const std::string&) const;
     std::string runExec(const std::string& filename, const std::string& stdin_str = "", const std::vector<std::string>& args = {});
     template<typename ReturnType, typename... Args> ReturnType runExecAsFunction(const std::string&, const Args&...);
+    // keep arguments valid until the function returns, arguments are passed by reference not by value
     template<typename ReturnType, typename... Args> std::future<ReturnType> runExecAsAsyncFunction(const std::string&, const Args&...);
     size_t getNumJobs() const;
 };
@@ -47,7 +48,8 @@ class Client {
 
     size_t numMachines() const;
     Server& getMachine(const size_t);
-    template<typename ReturnType, typename... Args> std::future<ReturnType> roundRobinAsync(const std::string&, const Args&...);
+    // keep arguments valid until the function returns, arguments are passed by reference not by value
+    template<typename ReturnType, typename... Args> std::future<ReturnType> distributeAndRun(const std::string&, const Args&...);
 };
 #include "dc.tpp"
 

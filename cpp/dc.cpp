@@ -1,6 +1,7 @@
 #include <fstream>
 #include <unordered_map>
 #include <mutex>
+#include <stdexcept>
 
 #include "dc.hpp"
 #include "../my_header.h"
@@ -247,10 +248,14 @@ size_t Client::numMachines() const {
 }
 
 Server& Client::getMachine(const size_t index) {
-    return this->machines[index];
+    // machines.at(index) is used instead of machines[index] for safety reasons
+    return this->machines.at(index);
 }
 
 Server& Client::leastConnections() {
+    if(machines.empty()) {
+        throw std::out_of_range("");
+    }
     size_t minJobs = machines[0].getNumJobs();
     size_t minIter = 0;
     for(size_t i=1; i<machines.size(); i++) {
