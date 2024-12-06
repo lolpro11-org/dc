@@ -11,48 +11,53 @@ class RustString {
     const char* str;
 
     public:
-    RustString(const char*);
-    RustString(RustString&&);
-    ~RustString();
-    RustString& operator=(RustString&&);
-    const char* c_str() const;
+    bool valid() const noexcept;
+    constexpr RustString() noexcept ;
+    RustString(const char*) noexcept;
+    RustString(RustString&&) noexcept;
+    ~RustString() noexcept;
+    RustString& operator=(RustString&&) noexcept;
+    const char* c_str() const noexcept;
     std::string cpp_str() const;
 
     RustString(const RustString&) = delete;
     RustString& operator=(const RustString&) = delete;
 };
 
-RustString::RustString(const char* rstr) {
-    this->str = rstr;
+constexpr RustString::RustString() noexcept: str(nullptr) {}
+
+RustString::RustString(const char* rstr) noexcept: str(rstr) {}
+RustString::RustString(RustString&& ruststr) noexcept: str(ruststr.str) {
+    ruststr.str = nullptr; // transfers ownership to this string
 }
-RustString::RustString(RustString&& ruststr) {
-    this->str = ruststr.str;
-    ruststr.str = nullptr;
+bool RustString::valid() const noexcept {
+    return this->str!=nullptr;
 }
-RustString& RustString::operator=(RustString&& ruststr) {
+RustString& RustString::operator=(RustString&& ruststr) noexcept {
     if(this==&ruststr) return *this;
     this->str = ruststr.str;
     ruststr.str = nullptr;
     return *this;
 }
-RustString::~RustString() {
+RustString::~RustString() noexcept {
     if(this->str == nullptr) return;
     free_string(this->str);
     this->str = nullptr;
 }
-const char* RustString::c_str() const {
+const char* RustString::c_str() const noexcept {
     return this->str;
 }
+// may throw as it calls the C++ string constructor
 std::string RustString::cpp_str() const {
     return std::string(this->str);
 }
 
-Server::Executable::Executable(): valid(false) {}
-Server::Executable::Executable(const std::string& ip, const std::string& src): IPaddress(ip), handle(src), valid(true) {}
-Server::Executable::Executable(Server::Executable&& src): IPaddress(std::move(src.IPaddress)), handle(std::move(src.handle)), valid(src.valid) {
+Server::Executable::Executable() noexcept: valid(false) {}
+Server::Executable::Executable(const std::string& ip, const std::string& src) noexcept: IPaddress(ip), handle(src), valid(true) {}
+Server::Executable::Executable(Server::Executable&& src) noexcept: IPaddress(std::move(src.IPaddress)), handle(std::move(src.handle)), valid(src.valid) {
     src.valid = false;
 }
-Server::Executable& Server::Executable::operator=(Server::Executable&& src) {
+Server::Executable& Server::Executable::operator=(Server::Executable&& src) noexcept {
     if(this==&src) return *this;
     this->cleanup();
     this->handle = std::move(src.handle);
@@ -61,15 +66,15 @@ Server::Executable& Server::Executable::operator=(Server::Executable&& src) {
     src.valid = false;
     return *this;
 }
-Server::Executable::~Executable() {
+Server::Executable::~Executable() noexcept {
     this->cleanup();
 }
-void Server::Executable::cleanup() {
+void Server::Executable::cleanup() noexcept {
     if(!(this->valid)) return;
     this->valid = false;
     RustString(c_remove_binary(this->IPaddress.c_str(), this->handle.c_str()));
 }
-const char* Server::Executable::c_str() const {
+const char* Server::Executable::c_str() const noexcept {
     return this->handle.c_str();
 }
 
@@ -174,7 +179,7 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
             iter = serverData.executables.find(filename);
         }
     }
-    Server::Executable& execHandle = iter->second;
+    const Server::Executable& execHandle = iter->second;
 
     size_t stdoutLength = 0;
     {
@@ -186,7 +191,7 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
         std::lock_guard lock(serverData.srvmut);
         if(serverData.numJobs>0) serverData.numJobs--;
     }
-    std::string stdout_str((const char*)stdoutVec, stdoutLength);
+    const std::string stdout_str((const char*)stdoutVec, stdoutLength);
     free_vec((void*)stdoutVec, (size_t)0, (size_t)0);
     return stdout_str;
 }
@@ -234,7 +239,7 @@ Server& Client::getMachine(const size_t index) {
 
 Server& Client::leastConnections() {
     if(machines.empty()) {
-        throw std::out_of_range("");
+        throw std::out_of_range("Cannot obtain a reference to a server object, client has none stored");
     }
     size_t minJobs = machines[0].getNumJobs();
     size_t minIter = 0;

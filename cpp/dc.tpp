@@ -10,16 +10,16 @@ class Server::Executable {
     std::string handle;
     bool valid;
 
-    void cleanup();
+    void cleanup() noexcept;
 
     public:
-    const char* c_str() const;
+    const char* c_str() const noexcept;
     
-    Executable();
-    Executable(const std::string&, const std::string&);
-    Executable(Executable&&);
-    Executable& operator=(Executable&&);
-    ~Executable();
+    Executable() noexcept;
+    Executable(const std::string&, const std::string&) noexcept;
+    Executable(Executable&&) noexcept;
+    Executable& operator=(Executable&&) noexcept;
+    ~Executable() noexcept;
 
     Executable(const Executable&) = delete;
     Executable& operator=(const Executable&) = delete;
@@ -34,13 +34,20 @@ struct Server::data {
 };
 
 template<typename ReturnType, typename... Args> ReturnType Server::runExecAsFunction(const std::string& filename, const Args&... args) {
-    ReturnType output = serial::deserializeFromString<ReturnType>(this->runExec(filename, serial::serializeToString(args...)));
     Server::data& srvdata = this->getData();
-    {
+    try {
+        ReturnType output = serial::deserializeFromString<ReturnType>(this->runExec(filename, serial::serializeToString(args...)));
+        {
+            std::lock_guard lock(srvdata.srvmut);
+            srvdata.numThreads--;
+        }
+        return output;
+    } catch(...) {
+        // guarantee the count is decremented, even if an exception is thrown
         std::lock_guard lock(srvdata.srvmut);
         srvdata.numThreads--;
+        throw; // allow the user to handle the error
     }
-    return output;
 }
 
 template<typename ReturnType, typename... Args> std::future<ReturnType> Server::runExecAsAsyncFunction(const std::string& filename, const Args&... args) {
