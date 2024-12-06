@@ -47,27 +47,6 @@ std::string RustString::cpp_str() const {
     return std::string(this->str);
 }
 
-class Server::Executable {
-    private:
-    std::string IPaddress;
-    std::string handle;
-    bool valid;
-
-    void cleanup();
-
-    public:
-    const char* c_str() const;
-    
-    Executable();
-    Executable(const std::string&, const std::string&);
-    Executable(Executable&&);
-    Executable& operator=(Executable&&);
-    ~Executable();
-
-    Executable(const Executable&) = delete;
-    Executable& operator=(const Executable&) = delete;
-};
-
 Server::Executable::Executable(): valid(false) {}
 Server::Executable::Executable(const std::string& ip, const std::string& src): IPaddress(ip), handle(src), valid(true) {}
 Server::Executable::Executable(Server::Executable&& src): IPaddress(std::move(src.IPaddress)), handle(std::move(src.handle)), valid(src.valid) {
@@ -94,21 +73,20 @@ const char* Server::Executable::c_str() const {
     return this->handle.c_str();
 }
 
-struct Server::data {
-    size_t users;
-    size_t numJobs;
-    std::mutex srvmut;
-    std::unordered_map<std::string, Executable> executables; // filenames, executable handles
-};
-
 Server::Server() {
-    this->getData().users++;
+    Server::data& srvdata = this->getData();
+    std::lock_guard(srvdata.srvmut);
+    srvdata.users++;
 }
 Server::Server(const std::string& ip): IPaddress(ip) {
-    this->getData().users++;
+    Server::data& srvdata = this->getData();
+    std::lock_guard(srvdata.srvmut);
+    srvdata.users++;
 }
 Server::Server(const Server& src): IPaddress(src.IPaddress) {
-    this->getData().users++;
+    Server::data& srvdata = this->getData();
+    std::lock_guard(srvdata.srvmut);
+    srvdata.users++;
 }
 
 Server& Server::operator=(const Server& src) {
@@ -121,8 +99,16 @@ Server& Server::operator=(const Server& src) {
 
 void Server::cleanup() {
     Server::data& serverData = this->getData();
-    std::lock_guard lock(serverData.srvmut);
-    if(--serverData.users!=0) return;
+    {
+        std::lock_guard lock(serverData.srvmut);
+        if(--serverData.users!=0) return;
+    }
+    // wait for threads to finish
+    while(serverData.numThreads!=0) {
+        std::lock_guard lock(serverData.srvmut);
+        if(serverData.numThreads!=0) continue;
+        break;
+    }
     serverData.executables.clear();
 }
 
@@ -170,7 +156,7 @@ void Server::sendExec(const std::string& filename) const {
     delete[] buffer.first;
 }
 
-std::string Server::runExec(const std::string& filename, const std::string& stdin_str, const std::vector<std::string>& args) {
+std::string Server::runExec(const std::string& filename, const std::string& stdin_str) {
     Server::data& serverData = this->getData();
 
     std::unordered_map<std::string, Executable>::iterator iter;
@@ -191,21 +177,15 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
     Server::Executable& execHandle = iter->second;
 
     size_t stdoutLength = 0;
-    const char** argv = new const char*[args.size()];
-    for(size_t i=0; i<args.size(); i++) {
-        argv[i] = args[i].c_str();
-    }
-
     {
         std::lock_guard lock(serverData.srvmut);
         serverData.numJobs++;
     }
-    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.c_str(), argv, args.size(), (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength);
+    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.c_str(), nullptr, 0, (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength);
     {
         std::lock_guard lock(serverData.srvmut);
         if(serverData.numJobs>0) serverData.numJobs--;
     }
-    delete[] argv;
     std::string stdout_str((const char*)stdoutVec, stdoutLength);
     free_vec((void*)stdoutVec, (size_t)0, (size_t)0);
     return stdout_str;
