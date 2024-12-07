@@ -21,7 +21,8 @@ const uint8_t *c_execute_binary(const char *ip_addr,
                                 size_t count,
                                 const uint8_t *stdin_input,
                                 size_t stdin_len,
-                                size_t *out_len);
+                                size_t *out_len,
+                                size_t *out_cap);
 
 const char *c_get(const char *ip_addr, const char *key);
 

@@ -13,7 +13,7 @@ class Server {
 
     std::string IPaddress;
 
-    static std::pair<uint8_t*, size_t> readFile(const std::string&);
+    static std::pair<const uint8_t*, size_t> readFile(const std::string&);
     Server::data& getData() const;
 
     void cleanup();
@@ -46,7 +46,7 @@ class Client {
     Client& operator=(const Client&);
     ~Client();
 
-    size_t numMachines() const;
+    size_t numMachines() const noexcept;
     Server& getMachine(const size_t);
     // keep arguments valid until the function returns, arguments are passed by reference not by value
     template<typename ReturnType, typename... Args> std::future<ReturnType> distributeAndRun(const std::string&, const Args&...);

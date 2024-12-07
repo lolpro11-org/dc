@@ -1,4 +1,4 @@
-DEBUGFLAGS = -fsanitize=address -static-libasan -g -D_GLIBCXX_DEBUG
+DEBUGFLAGS = -fsanitize=address -static-libasan -g -D_GLIBCXX_DEBUG -fno-omit-frame-pointer -fsanitize-address-use-after-scope -fno-common
 OPTIMIZATIONS = -Ofast
 CPPVERSION = -std=c++17
 WARNINGS = -Wno-unused-function -Wall -Wextra -pedantic -Wfatal-errors

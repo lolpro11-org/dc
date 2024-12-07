@@ -49,7 +49,7 @@ const char* RustString::c_str() const noexcept {
 }
 // may throw as it calls the C++ string constructor
 std::string RustString::cpp_str() const {
-    return std::string(this->str);
+    return std::string(this->valid() ? this->str : "");
 }
 
 Server::Executable::Executable() noexcept: valid(false) {}
@@ -121,7 +121,7 @@ Server::~Server() {
     this->cleanup();
 }
 
-std::pair<uint8_t*, size_t> Server::readFile(const std::string& filename) {
+std::pair<const uint8_t*, size_t> Server::readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
     const std::streamsize size = file.tellg();
     file.seekg(0, std::ios::beg);
@@ -136,7 +136,7 @@ void Server::removeExec(const std::string& filename) const {
 
     std::lock_guard lock(serverData.srvmut);
 
-    std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
+    const std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
     if(iter==serverData.executables.cend()) return;
     serverData.executables.erase(iter);
 }
@@ -146,11 +146,11 @@ void Server::removeExec(const std::string& filename) const {
 void Server::sendExec(const std::string& filename) const {
     Server::data& serverData = this->getData();
 
-    std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
+    const std::pair<const uint8_t*, size_t> buffer = Server::readFile(filename);
     {
         std::lock_guard lock(serverData.srvmut);
     
-        std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
+        const std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
         if(iter!=serverData.executables.cend()) {
             serverData.executables.erase(iter);
         }
@@ -169,7 +169,7 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
         std::lock_guard lock(serverData.srvmut);
         iter = serverData.executables.find(filename);
         if(iter==serverData.executables.cend()) {
-            std::pair<uint8_t*, size_t> buffer = Server::readFile(filename);
+            const std::pair<const uint8_t*, size_t> buffer = Server::readFile(filename);
 
             // the RustString is created to offload memory management responsibilities
             serverData.executables.emplace(filename, std::move(Executable(this->IPaddress, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str())));
@@ -182,17 +182,18 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
     const Server::Executable& execHandle = iter->second;
 
     size_t stdoutLength = 0;
+    size_t stdoutCap = 0;
     {
         std::lock_guard lock(serverData.srvmut);
         serverData.numJobs++;
     }
-    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.c_str(), nullptr, 0, (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength);
+    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.c_str(), nullptr, 0, (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength, &stdoutCap);
     {
         std::lock_guard lock(serverData.srvmut);
         if(serverData.numJobs>0) serverData.numJobs--;
     }
     const std::string stdout_str((const char*)stdoutVec, stdoutLength);
-    free_vec((void*)stdoutVec, (size_t)0, (size_t)0);
+    free_vec((void*)stdoutVec, stdoutLength, stdoutCap);
     return stdout_str;
 }
 
@@ -228,7 +229,7 @@ Client& Client::operator=(const Client& src) {
 
 Client::~Client() {}
 
-size_t Client::numMachines() const {
+size_t Client::numMachines() const noexcept {
     return this->machines.size();
 }
 
