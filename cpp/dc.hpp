@@ -40,8 +40,10 @@ class Client {
     Server& leastConnections();
 
     public:
+    Client();
     Client(const std::vector<Server>&);
     Client(std::initializer_list<Server>);
+    Client(std::initializer_list<std::string>);
     Client(const Client&);
     Client& operator=(const Client&);
     ~Client() noexcept;

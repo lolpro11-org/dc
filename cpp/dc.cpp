@@ -244,8 +244,14 @@ Server::data& Server::getData() const noexcept {
     return servers[this->IPaddress];
 }
 
+Client::Client() {}
 Client::Client(const std::vector<Server>& servers): machines(servers) {}
 Client::Client(std::initializer_list<Server> servers): machines(servers) {}
+Client::Client(std::initializer_list<std::string> IPaddresses) {
+    for(const std::string& IPaddress : IPaddresses) {
+        machines.emplace_back(IPaddress);
+    }
+}
 
 Client::Client(const Client& src): machines(src.machines) {}
 
