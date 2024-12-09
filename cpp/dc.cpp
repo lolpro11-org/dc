@@ -1,6 +1,7 @@
 #include <fstream>
 #include <unordered_map>
 #include <mutex>
+#include <exception>
 #include <stdexcept>
 
 #include "dc.hpp"
@@ -78,23 +79,23 @@ const char* Server::Executable::c_str() const noexcept {
     return this->handle.c_str();
 }
 
-Server::Server() {
+Server::Server() noexcept {
     Server::data& srvdata = this->getData();
     std::lock_guard(srvdata.srvmut);
     srvdata.users++;
 }
-Server::Server(const std::string& ip): IPaddress(ip) {
+Server::Server(const std::string& ip) noexcept: IPaddress(ip) {
     Server::data& srvdata = this->getData();
     std::lock_guard(srvdata.srvmut);
     srvdata.users++;
 }
-Server::Server(const Server& src): IPaddress(src.IPaddress) {
+Server::Server(const Server& src) noexcept: IPaddress(src.IPaddress) {
     Server::data& srvdata = this->getData();
     std::lock_guard(srvdata.srvmut);
     srvdata.users++;
 }
 
-Server& Server::operator=(const Server& src) {
+Server& Server::operator=(const Server& src) noexcept {
     if(this==&src) return *this;
     src.getData().users++;
     this->cleanup();
@@ -102,7 +103,7 @@ Server& Server::operator=(const Server& src) {
     return *this;
 }
 
-void Server::cleanup() {
+void Server::cleanup() noexcept {
     Server::data& serverData = this->getData();
     {
         std::lock_guard lock(serverData.srvmut);
@@ -117,25 +118,42 @@ void Server::cleanup() {
     serverData.executables.clear();
 }
 
-Server::~Server() {
+Server::~Server() noexcept {
     this->cleanup();
 }
 
 std::pair<const uint8_t*, size_t> Server::readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
-    const std::streamsize size = file.tellg();
-    file.seekg(0, std::ios::beg);
-    uint8_t*const buffer = new uint8_t[size];
-    file.read((char*)buffer, size);
-    file.close();
-    return std::pair<uint8_t*, size_t>(buffer, size);
+    if(!file.is_open()) {
+        throw std::runtime_error("could not open file (Server::readFile)");
+    }
+    std::streamsize size;
+    try {
+        size = file.tellg();
+        file.seekg(0, std::ios::beg);
+    } catch(...) {
+        throw std::runtime_error("could not calculate file size (Server::readFile)");
+    }
+    uint8_t* buffer = nullptr;
+    try {
+        buffer = new uint8_t[size];
+    } catch(const std::bad_alloc& except) {
+        throw std::runtime_error("could not read file, new threw std::bad_alloc (Server::readFile)");
+    }
+    try {
+        file.read((char*)buffer, size);
+        // the file is closed when the destructor is called, and it avoids exceptions
+        return std::pair<const uint8_t*, size_t>((const uint8_t*)buffer, size);
+    } catch(...) {
+        delete[] buffer;
+        throw std::runtime_error("error reading file (Server::readFile)");
+    }
 }
 
-void Server::removeExec(const std::string& filename) const {
+void Server::removeExec(const std::string& filename) const noexcept {
     Server::data& serverData = this->getData();
 
     std::lock_guard lock(serverData.srvmut);
-
     const std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
     if(iter==serverData.executables.cend()) return;
     serverData.executables.erase(iter);
@@ -145,8 +163,12 @@ void Server::removeExec(const std::string& filename) const {
 // a fix would be to put it after the lock, but that would mean the file reading is no longer done in parallel
 void Server::sendExec(const std::string& filename) const {
     Server::data& serverData = this->getData();
-
-    const std::pair<const uint8_t*, size_t> buffer = Server::readFile(filename);
+    std::pair<const uint8_t*, size_t> buffer;
+    try {
+        buffer = Server::readFile(filename);
+    } catch(...) {
+        throw std::runtime_error("Could not copy the file to an internal buffer, error from Server::readFile (Server::sendExec)");
+    }
     {
         std::lock_guard lock(serverData.srvmut);
     
@@ -169,7 +191,13 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
         std::lock_guard lock(serverData.srvmut);
         iter = serverData.executables.find(filename);
         if(iter==serverData.executables.cend()) {
-            const std::pair<const uint8_t*, size_t> buffer = Server::readFile(filename);
+            std::pair<const uint8_t*, size_t> buffer;
+            try {
+                buffer = Server::readFile(filename);
+            } catch(...) {
+                // the buffer is already deallocated when an exception is thrown
+                throw std::runtime_error("Could not copy the file to an internal buffer, error from Server::readFile (Server::runExec)");
+            }
 
             // the RustString is created to offload memory management responsibilities
             serverData.executables.emplace(filename, std::move(Executable(this->IPaddress, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str())));
@@ -200,8 +228,8 @@ std::string Server::runExec(const std::string& filename, const std::string& stdi
 size_t Server::getNumJobs() const {
     return this->getData().numJobs;
 }
- 
-Server::data& Server::getData() const {
+
+Server::data& Server::getData() const noexcept {
     static std::mutex datamut; // initalization is thread safe
 
     // servers was initially a static member of the class Server,
@@ -227,7 +255,7 @@ Client& Client::operator=(const Client& src) {
     return *this;
 }
 
-Client::~Client() {}
+Client::~Client() noexcept {}
 
 size_t Client::numMachines() const noexcept {
     return this->machines.size();

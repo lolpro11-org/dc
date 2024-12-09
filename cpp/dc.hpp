@@ -14,18 +14,18 @@ class Server {
     std::string IPaddress;
 
     static std::pair<const uint8_t*, size_t> readFile(const std::string&);
-    Server::data& getData() const;
+    Server::data& getData() const noexcept;
 
-    void cleanup();
+    void cleanup() noexcept;
 
     public:
-    Server();
-    Server(const std::string&);
-    Server(const Server&);
-    Server& operator=(const Server&);
-    ~Server();
+    Server() noexcept;
+    Server(const std::string&) noexcept;
+    Server(const Server&) noexcept;
+    Server& operator=(const Server&) noexcept;
+    ~Server() noexcept;
     void sendExec(const std::string&) const;
-    void removeExec(const std::string&) const;
+    void removeExec(const std::string&) const noexcept;
     std::string runExec(const std::string& filename, const std::string& stdin_str = "");
     template<typename ReturnType, typename... Args> ReturnType runExecAsFunction(const std::string&, const Args&...);
     // keep arguments valid until the function returns, arguments are passed by reference not by value
@@ -44,7 +44,7 @@ class Client {
     Client(std::initializer_list<Server>);
     Client(const Client&);
     Client& operator=(const Client&);
-    ~Client();
+    ~Client() noexcept;
 
     size_t numMachines() const noexcept;
     Server& getMachine(const size_t);
