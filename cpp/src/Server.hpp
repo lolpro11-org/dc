@@ -1,9 +1,10 @@
-#ifndef DC_HPP
-#define DC_HPP
+#ifndef SERVER_HPP
+#define SERVER_HPP
 
-#include <vector>
 #include <string>
 #include <future>
+#include <unordered_map>
+
 
 class Server {
     private:
@@ -35,25 +36,37 @@ class Server {
     size_t getNumJobs() const;
 };
 
-class Client {
-    private:
-    std::vector<Server> machines;
 
-    Server& leastConnections();
+class Server::Executable {
+    friend class Server;
+    private:
+    std::string IPaddress;
+    std::string handle;
+    bool valid;
+
+    static std::pair<const uint8_t*, size_t> readFile(const std::string&);
 
     public:
-    Client();
-    Client(const std::vector<Server>&);
-    Client(std::initializer_list<Server>);
-    Client(std::initializer_list<std::string>);
-    Client(const Client&);
-    Client& operator=(const Client&);
 
-    size_t numMachines() const noexcept;
-    Server& getMachine(const size_t);
-    // keep arguments valid until the function returns, arguments are passed by reference not by value
-    template<typename ReturnType, typename... Args> std::future<ReturnType> distributeAndRun(const std::string&, const Args&...);
+    std::string operator()(const std::string) const;
+    operator bool() const;
+    
+    Executable();
+    // ip address, filename
+    Executable(const std::string&, const std::string&);
+    Executable(Executable&&);
+    Executable& operator=(Executable&&);
+    ~Executable() noexcept;
+
+    Executable(const Executable&) = delete;
+    Executable& operator=(const Executable&) = delete;
 };
-#include "dc.tpp"
+
+struct Server::data {
+    size_t users;
+    size_t numThreads;
+    std::mutex mut;
+    std::unordered_map<std::string, Server::Executable> executables; // filenames, executable handles
+};
 
 #endif

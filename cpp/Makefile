@@ -7,13 +7,17 @@ FLAGS = $(OPTIMIZATIONS) $(CPPVERSION) $(WARNINGS)
 main: libdc_cpp.a
 libdc.a:
 	cd ../ && $(MAKE)
-dc.o:
-	g++ -c dc.cpp $(FLAGS) -o dc.o
-libdc_cpp.a: dc.o libdc.a
+Client.o:
+	g++ -c src/Client.cpp $(FLAGS) -o bin/Client.o
+Server.o:
+	g++ -c src/Server.cpp $(FLAGS) -o bin/Server.o
+RustString.o:
+	g++ -c src/RustString.cpp $(FLAGS) -o bin/RustString.o
+libdc_cpp.a: libdc.a RustString.o Server.o Client.o
 	cp ../target/release/libdc.a libdc_cpp.a
-	ar r libdc_cpp.a dc.o
+	ar r libdc_cpp.a bin/RustString.o bin/Server.o bin/Client.o
 clean:
-	rm dc.o
+	rm bin/*
 	rm libdc_cpp.a
 	(cd ../ && $(MAKE) clean)
 .PHONY: libdc.a libdc_cpp.a main

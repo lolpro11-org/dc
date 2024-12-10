@@ -1,40 +1,8 @@
-#ifndef DC_TPP
-#define DC_TPP
-#include "dc.hpp"
+#ifndef CLIENT_TPP
+#define CLIENT_TPP
+#include "Client.hpp"
 
 #include "serialize.hpp"
-
-class Server::Executable {
-    friend class Server;
-    private:
-    std::string IPaddress;
-    std::string handle;
-    bool valid;
-
-    static std::pair<const uint8_t*, size_t> readFile(const std::string&);
-
-    public:
-
-    std::string operator()(const std::string) const;
-    operator bool() const;
-    
-    Executable();
-    // ip address, filename
-    Executable(const std::string&, const std::string&);
-    Executable(Executable&&);
-    Executable& operator=(Executable&&);
-    ~Executable() noexcept;
-
-    Executable(const Executable&) = delete;
-    Executable& operator=(const Executable&) = delete;
-};
-
-struct Server::data {
-    size_t users;
-    size_t numThreads;
-    std::mutex mut;
-    std::unordered_map<std::string, Server::Executable> executables; // filenames, executable handles
-};
 
 template<typename ReturnType, typename... Args> ReturnType Server::runExecAsFunction(const std::string& filename, const Args&... args) {
     Server::data& srvdata = this->getData();
