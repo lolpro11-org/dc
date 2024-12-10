@@ -23,29 +23,24 @@ Server::Server(const Server& src): IPaddress(src.IPaddress) {
 
 Server& Server::operator=(const Server& src) {
     if(this==&src) return *this;
-    src.getData().users++;
-    this->cleanup();
+    if(this->IPaddress==src.IPaddress) return *this; // optimization to prevent locking the mutex
+    {
+        Server::data& otherData = src.getData();
+        std::lock_guard lock(otherData.mut);
+        otherData.users++;
+    }
+    this->~Server();
     this->IPaddress = src.IPaddress;
     return *this;
 }
 
-void Server::cleanup() {
+Server::~Server() noexcept {
     Server::data& serverData = this->getData();
     {
         std::lock_guard lock(serverData.mut);
         if(--serverData.users!=0) return;
-    }
-    // wait for threads to finish
-    while(serverData.numThreads!=0) {
-        std::lock_guard lock(serverData.mut);
-        if(serverData.numThreads!=0) continue;
         serverData.executables.clear();
-        return;
     }
-}
-
-Server::~Server() noexcept {
-    this->cleanup();
 }
 
 
@@ -55,16 +50,16 @@ void Server::removeExec(const std::string& filename) const {
     serverData.executables.erase(filename);
 }
 
-void Server::sendExec(const std::string& filename) const {
+Server::Executable& Server::sendExec(const std::string& filename) const {
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
-    if(serverData.executables.find(filename)!=serverData.executables.cend()) return;
-    serverData.executables.emplace(filename, std::move(Server::Executable(this->IPaddress, filename)));
+    const std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
+    return (iter!=serverData.executables.cend()) ? iter->second : serverData.executables.emplace(filename, std::move(Server::Executable(this->IPaddress, filename))).first->second;
 }
-void Server::sendExecOverwrite(const std::string& filename) const {
+Server::Executable& Server::sendExecOverwrite(const std::string& filename) const {
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
-    serverData.executables[filename] = Server::Executable(this->IPaddress, filename);
+    return serverData.executables[filename] = Server::Executable(this->IPaddress, filename);
 }
 bool Server::containsExecutable(const std::string& filename) const {
     Server::data& serverData = this->getData();
@@ -78,8 +73,7 @@ Server::Executable& Server::getExecutable(const std::string& filename) const {
 }
 
 std::string Server::runExec(const std::string& filename, const std::string& stdin_str) {
-    this->sendExec(filename);
-    return this->getExecutable(filename)(stdin_str);
+    return this->sendExec(filename)(stdin_str);
 }
 
 size_t Server::getNumJobs() const {
@@ -108,17 +102,10 @@ Server::data& Server::getData() const {
 
 
 
-Server::Executable::Executable() {
-    valid = false;
-}
+Server::Executable::Executable() noexcept: valid(false) {}
 Server::Executable::Executable(const std::string& ip, const std::string& filename) {
-    std::pair<const uint8_t*, size_t> fileBuffer;
-    try {
-        fileBuffer = Server::Executable::readFile(filename);
-    } catch(...) {
-        // the buffer is already deallocated when an exception is thrown
-        throw std::runtime_error("Could not copy the file to an internal buffer, error from Server::Executable::readFile (Server::Executable::Executable)");
-    }
+    // readFile may throw std::runtime_error, and only std::runtime_error
+    const std::pair<const uint8_t*, size_t> fileBuffer = Server::Executable::readFile(filename);
     try {
         this->handle = RustString(c_send_binary(ip.c_str(), fileBuffer.first, fileBuffer.second)).cpp_str();
         this->IPaddress = ip;
@@ -163,7 +150,7 @@ std::string Server::Executable::operator()(const std::string stdin_str) const {
         throw;
     }
 }
-Server::Executable::operator bool() const {
+Server::Executable::operator bool() const noexcept {
     return this->valid;
 }
 
@@ -184,6 +171,8 @@ std::pair<const uint8_t*, size_t> Server::Executable::readFile(const std::string
         buffer = new uint8_t[size];
     } catch(const std::bad_alloc& except) {
         throw std::runtime_error("could not read file, new threw std::bad_alloc (Server::readFile)");
+    } catch(...) {
+        throw std::runtime_error("new threw an unknown exception (Server::readFile)");
     }
     try {
         file.read((char*)buffer, size);

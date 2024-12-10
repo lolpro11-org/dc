@@ -13,12 +13,12 @@ class Client {
     Server& leastConnections();
 
     public:
-    Client();
+    Client() = default;
+    Client(const Client&) = default;
+    Client& operator=(const Client&) = default;
     Client(const std::vector<Server>&);
     Client(std::initializer_list<Server>);
     Client(std::initializer_list<std::string>);
-    Client(const Client&);
-    Client& operator=(const Client&);
 
     size_t numMachines() const noexcept;
     Server& getMachine(const size_t);
