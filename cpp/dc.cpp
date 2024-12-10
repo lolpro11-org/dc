@@ -53,14 +53,31 @@ std::string RustString::cpp_str() const {
     return std::string(this->valid() ? this->str : "");
 }
 
-Server::Executable::Executable() noexcept: valid(false) {}
-Server::Executable::Executable(const std::string& ip, const std::string& src) noexcept: IPaddress(ip), handle(src), valid(true) {}
-Server::Executable::Executable(Server::Executable&& src) noexcept: IPaddress(std::move(src.IPaddress)), handle(std::move(src.handle)), valid(src.valid) {
+Server::Executable::Executable() {
+    valid = false;
+}
+Server::Executable::Executable(const std::string& ip, const std::string& filename) {
+    std::pair<const uint8_t*, size_t> fileBuffer;
+    try {
+        fileBuffer = Server::Executable::readFile(filename);
+    } catch(...) {
+        // the buffer is already deallocated when an exception is thrown
+        throw std::runtime_error("Could not copy the file to an internal buffer, error from Server::Executable::readFile (Server::Executable::Executable)");
+    }
+    this->handle = RustString(c_send_binary(ip.c_str(), fileBuffer.first, fileBuffer.second)).cpp_str();
+    delete[] fileBuffer.first;
+    this->IPaddress = ip;
+    this->valid = true;
+}
+Server::Executable::Executable(Server::Executable&& src) {
+    this->IPaddress = std::move(src.IPaddress);
+    this->handle = std::move(src.handle);
+    this->valid = src.valid;
     src.valid = false;
 }
-Server::Executable& Server::Executable::operator=(Server::Executable&& src) noexcept {
+Server::Executable& Server::Executable::operator=(Server::Executable&& src) {
     if(this==&src) return *this;
-    this->cleanup();
+    this->~Executable();
     this->handle = std::move(src.handle);
     this->IPaddress = std::move(src.IPaddress);
     this->valid = src.valid;
@@ -68,34 +85,40 @@ Server::Executable& Server::Executable::operator=(Server::Executable&& src) noex
     return *this;
 }
 Server::Executable::~Executable() noexcept {
-    this->cleanup();
-}
-void Server::Executable::cleanup() noexcept {
     if(!(this->valid)) return;
     this->valid = false;
     RustString(c_remove_binary(this->IPaddress.c_str(), this->handle.c_str()));
 }
-const char* Server::Executable::c_str() const noexcept {
-    return this->handle.c_str();
+std::string Server::Executable::operator()(const std::string stdin_str) const {
+    if(!(this->valid)) return "";
+    size_t stdoutLength = 0;
+    size_t stdoutCap = 0;
+    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), this->handle.c_str(), nullptr, 0, (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength, &stdoutCap);
+    const std::string stdout_str((const char*)stdoutVec, stdoutLength);
+    free_vec((void*)stdoutVec, stdoutLength, stdoutCap);
+    return stdout_str;
+}
+Server::Executable::operator bool() const {
+    return this->valid;
 }
 
-Server::Server() noexcept {
+Server::Server() {
     Server::data& srvdata = this->getData();
-    std::lock_guard(srvdata.srvmut);
+    std::lock_guard lock(srvdata.mut);
     srvdata.users++;
 }
-Server::Server(const std::string& ip) noexcept: IPaddress(ip) {
+Server::Server(const std::string& ip): IPaddress(ip) {
     Server::data& srvdata = this->getData();
-    std::lock_guard(srvdata.srvmut);
+    std::lock_guard lock(srvdata.mut);
     srvdata.users++;
 }
-Server::Server(const Server& src) noexcept: IPaddress(src.IPaddress) {
+Server::Server(const Server& src): IPaddress(src.IPaddress) {
     Server::data& srvdata = this->getData();
-    std::lock_guard(srvdata.srvmut);
+    std::lock_guard lock(srvdata.mut);
     srvdata.users++;
 }
 
-Server& Server::operator=(const Server& src) noexcept {
+Server& Server::operator=(const Server& src) {
     if(this==&src) return *this;
     src.getData().users++;
     this->cleanup();
@@ -103,26 +126,26 @@ Server& Server::operator=(const Server& src) noexcept {
     return *this;
 }
 
-void Server::cleanup() noexcept {
+void Server::cleanup() {
     Server::data& serverData = this->getData();
     {
-        std::lock_guard lock(serverData.srvmut);
+        std::lock_guard lock(serverData.mut);
         if(--serverData.users!=0) return;
     }
     // wait for threads to finish
     while(serverData.numThreads!=0) {
-        std::lock_guard lock(serverData.srvmut);
+        std::lock_guard lock(serverData.mut);
         if(serverData.numThreads!=0) continue;
-        break;
+        serverData.executables.clear();
+        return;
     }
-    serverData.executables.clear();
 }
 
 Server::~Server() noexcept {
     this->cleanup();
 }
 
-std::pair<const uint8_t*, size_t> Server::readFile(const std::string& filename) {
+std::pair<const uint8_t*, size_t> Server::Executable::readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
     if(!file.is_open()) {
         throw std::runtime_error("could not open file (Server::readFile)");
@@ -150,86 +173,45 @@ std::pair<const uint8_t*, size_t> Server::readFile(const std::string& filename) 
     }
 }
 
-void Server::removeExec(const std::string& filename) const noexcept {
+void Server::removeExec(const std::string& filename) const {
     Server::data& serverData = this->getData();
-
-    std::lock_guard lock(serverData.srvmut);
-    const std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
-    if(iter==serverData.executables.cend()) return;
-    serverData.executables.erase(iter);
+    std::lock_guard lock(serverData.mut);
+    serverData.executables.erase(filename);
 }
 
-// note, the buffer is created before the mutex is locked, which may lead to increased memory usage
-// a fix would be to put it after the lock, but that would mean the file reading is no longer done in parallel
 void Server::sendExec(const std::string& filename) const {
     Server::data& serverData = this->getData();
-    std::pair<const uint8_t*, size_t> buffer;
-    try {
-        buffer = Server::readFile(filename);
-    } catch(...) {
-        throw std::runtime_error("Could not copy the file to an internal buffer, error from Server::readFile (Server::sendExec)");
-    }
-    {
-        std::lock_guard lock(serverData.srvmut);
-    
-        const std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
-        if(iter!=serverData.executables.cend()) {
-            serverData.executables.erase(iter);
-        }
-        // the RustString is created to offload memory management responsibilities
-        serverData.executables.emplace(filename, std::move(Executable(this->IPaddress, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str())));
-    }
-
-    delete[] buffer.first;
+    std::lock_guard lock(serverData.mut);
+    if(serverData.executables.find(filename)!=serverData.executables.cend()) return;
+    serverData.executables.emplace(filename, std::move(Server::Executable(this->IPaddress, filename)));
+}
+void Server::sendExecOverwrite(const std::string& filename) const {
+    Server::data& serverData = this->getData();
+    std::lock_guard lock(serverData.mut);
+    serverData.executables[filename] = Server::Executable(this->IPaddress, filename);
+}
+bool Server::containsExecutable(const std::string& filename) const {
+    Server::data& serverData = this->getData();
+    std::lock_guard lock(serverData.mut);
+    return (serverData.executables.find(filename)!=serverData.executables.cend());
+}
+Server::Executable& Server::getExecutable(const std::string& filename) const {
+    Server::data& serverData = this->getData();
+    std::lock_guard lock(serverData.mut);
+    return serverData.executables[filename];
 }
 
 std::string Server::runExec(const std::string& filename, const std::string& stdin_str) {
-    Server::data& serverData = this->getData();
-
-    std::unordered_map<std::string, Executable>::iterator iter;
-    {
-        std::lock_guard lock(serverData.srvmut);
-        iter = serverData.executables.find(filename);
-        if(iter==serverData.executables.cend()) {
-            std::pair<const uint8_t*, size_t> buffer;
-            try {
-                buffer = Server::readFile(filename);
-            } catch(...) {
-                // the buffer is already deallocated when an exception is thrown
-                throw std::runtime_error("Could not copy the file to an internal buffer, error from Server::readFile (Server::runExec)");
-            }
-
-            // the RustString is created to offload memory management responsibilities
-            serverData.executables.emplace(filename, std::move(Executable(this->IPaddress, RustString(c_send_binary(this->IPaddress.c_str(), buffer.first, buffer.second)).cpp_str())));
-
-            delete[] buffer.first;
-
-            iter = serverData.executables.find(filename);
-        }
-    }
-    const Server::Executable& execHandle = iter->second;
-
-    size_t stdoutLength = 0;
-    size_t stdoutCap = 0;
-    {
-        std::lock_guard lock(serverData.srvmut);
-        serverData.numJobs++;
-    }
-    const uint8_t* stdoutVec = c_execute_binary(this->IPaddress.c_str(), execHandle.c_str(), nullptr, 0, (const uint8_t*)(stdin_str.c_str()), stdin_str.length(), &stdoutLength, &stdoutCap);
-    {
-        std::lock_guard lock(serverData.srvmut);
-        if(serverData.numJobs>0) serverData.numJobs--;
-    }
-    const std::string stdout_str((const char*)stdoutVec, stdoutLength);
-    free_vec((void*)stdoutVec, stdoutLength, stdoutCap);
-    return stdout_str;
+    this->sendExec(filename);
+    const Server::Executable& execHandle = this->getExecutable(filename);
+    return execHandle(stdin_str);
 }
 
 size_t Server::getNumJobs() const {
-    return this->getData().numJobs;
+    return this->getData().numThreads;
 }
 
-Server::data& Server::getData() const noexcept {
+Server::data& Server::getData() const {
     static std::mutex datamut; // initalization is thread safe
 
     // servers was initially a static member of the class Server,
@@ -260,8 +242,6 @@ Client& Client::operator=(const Client& src) {
     this->machines = src.machines;
     return *this;
 }
-
-Client::~Client() noexcept {}
 
 size_t Client::numMachines() const noexcept {
     return this->machines.size();
