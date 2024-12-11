@@ -14,7 +14,7 @@ namespace serial {
     }
     static void deserialize(std::istream& is, std::string& obj) {
         obj = std::string("");
-        size_t len = 0;
+        std::size_t len = 0;
         serial::deserialize(is, len);
         obj.resize(len);
         for(char& c : obj) {
@@ -32,10 +32,10 @@ namespace serial {
         }
     }
     template<typename type> static void deserialize(std::istream& is, std::vector<type>& obj) {
-        size_t vectorSize = 0;
+        std::size_t vectorSize = 0;
         serial::internal::deserialize(is, vectorSize);
         obj = std::vector<type>(vectorSize);
-        for(size_t i=0; i<vectorSize; i++) {
+        for(std::size_t i=0; i<vectorSize; i++) {
             serial::internal::deserialize(is, obj[i]);
         }
     }

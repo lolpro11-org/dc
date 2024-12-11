@@ -31,7 +31,7 @@ class Server {
     template<typename ReturnType, typename... Args> ReturnType runExecAsFunction(const std::string&, const Args&...);
     // keep arguments valid until the function returns, arguments are passed by reference not by value
     template<typename ReturnType, typename... Args> std::future<ReturnType> runExecAsAsyncFunction(const std::string&, const Args&...);
-    size_t getNumJobs() const;
+    std::size_t getNumJobs() const;
 };
 
 
@@ -42,7 +42,7 @@ class Server::Executable {
     std::string handle;
     bool valid;
 
-    static std::pair<const uint8_t*, size_t> readFile(const std::string&);
+    static std::pair<const uint8_t*, std::size_t> readFile(const std::string&);
 
     public:
 
@@ -61,10 +61,12 @@ class Server::Executable {
 };
 
 struct Server::data {
-    size_t users;
-    size_t numThreads;
+    std::atomic<std::size_t> users;
+    std::atomic<std::size_t> numThreads;
     std::mutex mut;
     std::unordered_map<std::string, Server::Executable> executables; // filenames, executable handles
 };
+
+#include "Server.tpp"
 
 #endif

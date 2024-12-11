@@ -11,11 +11,11 @@ Client::Client(std::initializer_list<std::string> IPaddresses) {
     }
 }
 
-size_t Client::numMachines() const noexcept {
+std::size_t Client::numMachines() const noexcept {
     return this->machines.size();
 }
 
-Server& Client::getMachine(const size_t index) {
+Server& Client::getMachine(const std::size_t index) {
     // machines.at(index) is used instead of machines[index] for safety reasons
     return this->machines.at(index);
 }
@@ -23,10 +23,10 @@ Server& Client::getMachine(const size_t index) {
 Server& Client::leastConnections() {
     if(this->numMachines()==0) throw std::out_of_range("Cannot obtain a reference to a server object, client has none stored");
     else if(this->numMachines()==1) return machines[0];
-    size_t minJobs = machines[0].getNumJobs();
-    size_t minIter = 0;
-    for(size_t i=1; i<this->numMachines(); i++) {
-        const size_t numJobs = machines[i].getNumJobs();
+    std::size_t minJobs = machines[0].getNumJobs();
+    std::size_t minIter = 0;
+    for(std::size_t i=1; i<this->numMachines(); i++) {
+        const std::size_t numJobs = machines[i].getNumJobs();
         if(minJobs <= numJobs) continue;
         minJobs = numJobs;
         minIter = i;
