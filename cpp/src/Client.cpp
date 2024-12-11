@@ -43,3 +43,7 @@ Server& Client::leastConnections() noexcept {
     }
     return machines[minIter];
 }
+
+std::future<std::string> Client::distributeAndRun(const std::string& filename, const std::string& stdin_str) {
+    return leastConnections().runExecAsync(filename, stdin_str);
+}

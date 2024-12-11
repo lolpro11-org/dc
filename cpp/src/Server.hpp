@@ -32,9 +32,7 @@ class Server {
     Server::Executable& sendExecOverwrite(const std::string&) const;
     void removeExec(const std::string&) const noexcept;
     std::string runExec(const std::string& filename, const std::string& stdin_str = "");
-    template<typename ReturnType, typename... Args> ReturnType runExecAsFunction(const std::string&, const Args&...);
-    // keep arguments valid until the function returns, arguments are passed by reference not by value
-    template<typename ReturnType, typename... Args> std::future<ReturnType> runExecAsAsyncFunction(const std::string&, const Args&...);
+    std::future<std::string> runExecAsync(const std::string&, const std::string&);
     
     bool operator==(const Server&) const noexcept;
     bool operator!=(const Server&) const noexcept;
@@ -72,7 +70,5 @@ struct Server::data {
     std::mutex mut;
     std::unordered_map<std::string, Server::Executable> executables; // filenames, executable handles
 };
-
-#include "Server.tpp"
 
 #endif

@@ -82,7 +82,9 @@ Server::Executable& Server::getExecutable(const std::string& filename) const {
 
 std::string Server::runExec(const std::string& filename, const std::string& stdin_str) {
     if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::runExec)");
-    return this->sendExec(filename)(stdin_str);
+    const std::string stdout_str = this->sendExec(filename)(stdin_str);
+    this->getData().numThreads--;
+    return stdout_str;
 }
 
 std::size_t Server::getNumJobs() const noexcept {
@@ -102,6 +104,12 @@ Server::data& Server::getData() const noexcept {
 
     std::lock_guard lock(datamut);
     return servers[this->IPaddress];
+}
+
+std::future<std::string> Server::runExecAsync(const std::string& filename, const std::string& stdin_str) {
+    if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::runExecAsync)");
+    this->getData().numThreads++; // gets decremented when runExecAsFunction finishes
+    return std::async(std::launch::async, &Server::runExec, *this, filename, stdin_str);
 }
 
 

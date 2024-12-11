@@ -23,8 +23,7 @@ class Client {
     std::size_t numMachines() const noexcept;
     Server& getMachine(const std::size_t);
     // keep arguments valid until the function returns, arguments are passed by reference not by value
-    template<typename ReturnType, typename... Args> std::future<ReturnType> distributeAndRun(const std::string&, const Args&...);
+    std::future<std::string> distributeAndRun(const std::string&, const std::string&);
 };
-#include "Client.tpp"
 
 #endif
