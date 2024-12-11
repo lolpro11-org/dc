@@ -10,10 +10,10 @@ class Client {
     private:
     std::vector<Server> machines;
 
-    Server& leastConnections();
+    Server& leastConnections() noexcept;
 
     public:
-    Client() = default;
+    Client();
     Client(const Client&) = default;
     Client& operator=(const Client&) = default;
     Client(const std::vector<Server>&);

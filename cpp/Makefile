@@ -2,7 +2,8 @@ PROFILEFLAGS = -pg -fno-omit-frame-pointer -fno-common
 DEBUGFLAGS = -fsanitize=address -static-libasan -g -D_GLIBCXX_DEBUG -fno-omit-frame-pointer -fsanitize-address-use-after-scope -fno-common
 OPTIMIZATIONS = -Ofast
 CPPVERSION = -std=c++17
-WARNINGS = -Wno-unused-function -Wall -Wextra -pedantic -Wfatal-errors
+# -Wunused-function disabled for serialization lib, and -Wterminate to prevent errors dealing with termination from exceptions
+WARNINGS = -Wno-unused-function -Wno-terminate -Wall -Wextra -pedantic -Wfatal-errors
 FLAGS = $(OPTIMIZATIONS) $(CPPVERSION) $(WARNINGS)
 main: libdc_cpp.a
 libdc.a:

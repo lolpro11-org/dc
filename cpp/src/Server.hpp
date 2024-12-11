@@ -10,28 +10,34 @@ class Server {
     private:
 
     class Executable;
+    friend class Server::Executable;
+    
     struct data;
     
     std::string IPaddress;
 
-    Server::data& getData() const;
+    Server::data& getData() const noexcept;
     bool containsExecutable(const std::string&) const;
     Server::Executable& getExecutable(const std::string&) const;
 
     public:
+
     Server();
     Server(const std::string&);
     Server(const Server&);
     Server& operator=(const Server&);
     ~Server() noexcept;
+    std::size_t getNumJobs() const noexcept;
     Server::Executable& sendExec(const std::string&) const;
     Server::Executable& sendExecOverwrite(const std::string&) const;
-    void removeExec(const std::string&) const;
+    void removeExec(const std::string&) const noexcept;
     std::string runExec(const std::string& filename, const std::string& stdin_str = "");
     template<typename ReturnType, typename... Args> ReturnType runExecAsFunction(const std::string&, const Args&...);
     // keep arguments valid until the function returns, arguments are passed by reference not by value
     template<typename ReturnType, typename... Args> std::future<ReturnType> runExecAsAsyncFunction(const std::string&, const Args&...);
-    std::size_t getNumJobs() const;
+    
+    bool operator==(const Server&) const noexcept;
+    bool operator!=(const Server&) const noexcept;
 };
 
 
@@ -52,8 +58,8 @@ class Server::Executable {
     Executable() noexcept;
     // ip address, filename
     Executable(const std::string&, const std::string&);
-    Executable(Executable&&);
-    Executable& operator=(Executable&&);
+    Executable(Executable&&) noexcept;
+    Executable& operator=(Executable&&) noexcept;
     ~Executable() noexcept;
 
     Executable(const Executable&) = delete;

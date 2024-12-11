@@ -5,19 +5,24 @@
 #include "RustString.hpp"
 
 
-Server::Server() {
-    this->getData().users++;
-}
+Server::Server(): IPaddress() {}
 Server::Server(const std::string& ip): IPaddress(ip) {
+    if(this->IPaddress.empty()) return;
     this->getData().users++;
 }
 Server::Server(const Server& src): IPaddress(src.IPaddress) {
+    if(this->IPaddress.empty()) return;
     this->getData().users++;
 }
 
 Server& Server::operator=(const Server& src) {
     if(this==&src) return *this;
-    if(this->IPaddress==src.IPaddress) return *this; // optimization to prevent locking the mutex
+    if(*this == src) return *this; // optimization to prevent locking the mutex
+    if(src.IPaddress.empty()) {
+        this->~Server();
+        this->IPaddress.clear();
+        return *this;
+    }
     src.getData().users++;
     this->~Server();
     this->IPaddress = src.IPaddress;
@@ -25,6 +30,7 @@ Server& Server::operator=(const Server& src) {
 }
 
 Server::~Server() noexcept {
+    if(this->IPaddress.empty()) return;
     Server::data& serverData = this->getData();
     if(--serverData.users!=0) return;
     {
@@ -33,44 +39,57 @@ Server::~Server() noexcept {
     }
 }
 
+bool Server::operator==(const Server& rhs) const noexcept {
+    return (this == &rhs)?true:(this->IPaddress==rhs.IPaddress);
+}
 
-void Server::removeExec(const std::string& filename) const {
+bool Server::operator!=(const Server& rhs) const noexcept {
+    return !(*this == rhs);
+}
+
+
+void Server::removeExec(const std::string& filename) const noexcept {
+    if(this->IPaddress.empty()) return;
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
     serverData.executables.erase(filename);
 }
-
 Server::Executable& Server::sendExec(const std::string& filename) const {
+    if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::sendExec)");
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
     const std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
     return (iter!=serverData.executables.cend()) ? iter->second : serverData.executables.emplace(filename, std::move(Server::Executable(this->IPaddress, filename))).first->second;
 }
 Server::Executable& Server::sendExecOverwrite(const std::string& filename) const {
+    if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::sendExecOverwrite)");
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
     return serverData.executables[filename] = Server::Executable(this->IPaddress, filename);
 }
 bool Server::containsExecutable(const std::string& filename) const {
+    if(this->IPaddress.empty()) return false;
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
     return (serverData.executables.find(filename)!=serverData.executables.cend());
 }
 Server::Executable& Server::getExecutable(const std::string& filename) const {
+    if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::getExecutable)");
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
     return serverData.executables[filename];
 }
 
 std::string Server::runExec(const std::string& filename, const std::string& stdin_str) {
+    if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::runExec)");
     return this->sendExec(filename)(stdin_str);
 }
 
-std::size_t Server::getNumJobs() const {
-    return this->getData().numThreads;
+std::size_t Server::getNumJobs() const noexcept {
+    return this->IPaddress.empty() ? 0 : this->getData().numThreads.load();
 }
 
-Server::data& Server::getData() const {
+Server::data& Server::getData() const noexcept {
     static std::mutex datamut; // initalization is thread safe
 
     // servers was initially a static member of the class Server,
@@ -106,13 +125,13 @@ Server::Executable::Executable(const std::string& ip, const std::string& filenam
         throw;
     }
 }
-Server::Executable::Executable(Server::Executable&& src) {
+Server::Executable::Executable(Server::Executable&& src) noexcept {
     this->IPaddress = std::move(src.IPaddress);
     this->handle = std::move(src.handle);
     this->valid = src.valid;
     src.valid = false;
 }
-Server::Executable& Server::Executable::operator=(Server::Executable&& src) {
+Server::Executable& Server::Executable::operator=(Server::Executable&& src) noexcept {
     if(this==&src) return *this;
     this->~Executable();
     this->handle = std::move(src.handle);
