@@ -12,9 +12,8 @@ class Server {
     class Executable;
     friend class Server::Executable;
     
-    struct data;
+    class data;
     
-    std::string IPaddress;
     std::shared_ptr<Server::data> dataptr;
 
     Server::data& getData() const noexcept;
@@ -23,11 +22,11 @@ class Server {
 
     public:
 
-    Server();
+    Server() = default;
     Server(const std::string&);
     Server(const Server&);
     Server& operator=(const Server&);
-    ~Server() noexcept;
+    ~Server() noexcept = default;
     std::size_t getNumJobs() const noexcept;
     void sendExec(const std::string&) const;
     void sendExecOverwrite(const std::string&) const;
@@ -65,7 +64,18 @@ class Server::Executable {
     Executable& operator=(const Executable&) = delete;
 };
 
-struct Server::data {
+class Server::data {
+    public:
+
+    data(const std::string&);
+    ~data() noexcept = default;
+
+    data(const data&) = delete;
+    data(data&&) = delete;
+    data& operator=(const data&) = delete;
+    data& operator=(data&&) = delete;
+
+    const std::string IPaddress;
     std::atomic<std::size_t> users;
     std::atomic<std::size_t> numThreads;
     std::mutex mut;

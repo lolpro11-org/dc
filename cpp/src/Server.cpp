@@ -4,46 +4,24 @@
 #include "../../my_header.h"
 #include "RustString.hpp"
 
-
-Server::Server(): IPaddress() {}
-Server::Server(const std::string& ip): IPaddress(ip), dataptr(std::make_shared<Server::data>()) {
-    if(this->IPaddress.empty()) return;
-    this->getData().users++;
-}
-Server::Server(const Server& src): IPaddress(src.IPaddress) {
-    if(this->IPaddress.empty()) return;
-    this->dataptr = src.dataptr;
-    this->getData().users++;
-}
+Server::Server(const std::string& ip): dataptr(std::make_shared<Server::data>(ip)) {}
+Server::Server(const Server& src): dataptr(src.dataptr) {}
 
 Server& Server::operator=(const Server& src) {
     if(this==&src) return *this;
     if(*this == src) return *this; // optimization to prevent locking the mutex
-    if(src.IPaddress.empty()) {
+    if(src.getData().IPaddress.empty()) {
         this->~Server();
-        this->IPaddress.clear();
         this->dataptr = nullptr;
         return *this;
     }
-    src.dataptr->users++;
     this->~Server();
-    this->IPaddress = src.IPaddress;
     this->dataptr = src.dataptr;
     return *this;
 }
 
-Server::~Server() noexcept {
-    if(this->IPaddress.empty()) return;
-    Server::data& serverData = this->getData();
-    if(--serverData.users!=0) return;
-    {
-        std::lock_guard lock(serverData.mut);
-        serverData.executables.clear();
-    }
-}
-
 bool Server::operator==(const Server& rhs) const noexcept {
-    return (this == &rhs)?true:(this->IPaddress==rhs.IPaddress);
+    return (this->dataptr == rhs.dataptr);
 }
 
 bool Server::operator!=(const Server& rhs) const noexcept {
@@ -52,47 +30,49 @@ bool Server::operator!=(const Server& rhs) const noexcept {
 
 
 void Server::removeExec(const std::string& filename) const noexcept {
-    if(this->IPaddress.empty()) return;
     Server::data& serverData = this->getData();
+    if(serverData.IPaddress.empty()) return;
     std::lock_guard lock(serverData.mut);
     serverData.executables.erase(filename);
 }
 void Server::sendExec(const std::string& filename) const {
-    if(this->IPaddress.empty()) return;
     Server::data& serverData = this->getData();
+    if(serverData.IPaddress.empty()) return;
     std::lock_guard lock(serverData.mut);
     if(serverData.executables.find(filename)!=serverData.executables.cend()) return;
-    serverData.executables.emplace(filename, std::move(Server::Executable(this->IPaddress, filename)));
+    serverData.executables.emplace(filename, std::move(Server::Executable(serverData.IPaddress, filename)));
 }
 void Server::sendExecOverwrite(const std::string& filename) const {
-    if(this->IPaddress.empty()) return;
     Server::data& serverData = this->getData();
+    if(serverData.IPaddress.empty()) return;
     std::lock_guard lock(serverData.mut);
-    serverData.executables[filename] = Server::Executable(this->IPaddress, filename);
+    serverData.executables[filename] = Server::Executable(serverData.IPaddress, filename);
 }
 bool Server::containsExecutable(const std::string& filename) const {
-    if(this->IPaddress.empty()) return false;
     Server::data& serverData = this->getData();
+    if(serverData.IPaddress.empty()) return false;
     std::lock_guard lock(serverData.mut);
     return (serverData.executables.find(filename)!=serverData.executables.cend());
 }
 Server::Executable& Server::getExecutable(const std::string& filename) const {
-    if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::getExecutable)");
     Server::data& serverData = this->getData();
+    if(serverData.IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::getExecutable)");
     std::lock_guard lock(serverData.mut);
     return serverData.executables[filename];
 }
 
 std::string Server::runExec(const std::string& filename, const std::string& stdin_str) {
-    if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::runExec)");
+    Server::data& serverData = this->getData();
+    if(serverData.IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::runExec)");
     this->sendExec(filename);
     const std::string stdout_str = this->getExecutable(filename)(stdin_str);
-    this->getData().numThreads--;
+    serverData.numThreads--;
     return stdout_str;
 }
 
 std::size_t Server::getNumJobs() const noexcept {
-    return this->IPaddress.empty() ? 0 : this->getData().numThreads.load();
+    Server::data& serverData = this->getData();
+    return serverData.IPaddress.empty() ? 0 : serverData.numThreads.load();
 }
 
 Server::data& Server::getData() const noexcept {
@@ -100,8 +80,9 @@ Server::data& Server::getData() const noexcept {
 }
 
 std::future<std::string> Server::runExecAsync(const std::string& filename, const std::string& stdin_str) {
-    if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::runExecAsync)");
-    this->getData().numThreads++; // gets decremented when runExecAsFunction finishes
+    Server::data& serverData = this->getData();
+    if(serverData.IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::runExecAsync)");
+    serverData.numThreads++; // gets decremented when runExecAsFunction finishes
     return std::async(std::launch::async, &Server::runExec, *this, filename, stdin_str);
 }
 
@@ -195,3 +176,9 @@ std::pair<const uint8_t*, std::size_t> Server::Executable::readFile(const std::s
         throw std::runtime_error("error reading file (Server::readFile)");
     }
 }
+
+
+
+
+
+Server::data::data(const std::string& ip): IPaddress(ip) {}
