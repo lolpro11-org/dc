@@ -15,6 +15,7 @@ class Server {
     struct data;
     
     std::string IPaddress;
+    std::shared_ptr<Server::data> dataptr;
 
     Server::data& getData() const noexcept;
     bool containsExecutable(const std::string&) const;
@@ -28,8 +29,8 @@ class Server {
     Server& operator=(const Server&);
     ~Server() noexcept;
     std::size_t getNumJobs() const noexcept;
-    Server::Executable& sendExec(const std::string&) const;
-    Server::Executable& sendExecOverwrite(const std::string&) const;
+    void sendExec(const std::string&) const;
+    void sendExecOverwrite(const std::string&) const;
     void removeExec(const std::string&) const noexcept;
     std::string runExec(const std::string& filename, const std::string& stdin_str = "");
     std::future<std::string> runExecAsync(const std::string&, const std::string&);

@@ -17,7 +17,7 @@ RustString& RustString::operator=(RustString&& ruststr) noexcept {
     return *this;
 }
 RustString::~RustString() noexcept {
-    if(this->str == nullptr) return;
+    if(!(this->valid())) return;
     free_string(this->str);
     this->str = nullptr;
 }
@@ -26,5 +26,5 @@ const char* RustString::c_str() const noexcept {
 }
 // may throw as it calls the C++ string constructor
 std::string RustString::cpp_str() const {
-    return std::string(this->valid() ? this->str : "");
+    return std::string(this->valid() ? this->c_str() : "");
 }

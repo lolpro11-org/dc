@@ -6,12 +6,13 @@
 
 
 Server::Server(): IPaddress() {}
-Server::Server(const std::string& ip): IPaddress(ip) {
+Server::Server(const std::string& ip): IPaddress(ip), dataptr(std::make_shared<Server::data>()) {
     if(this->IPaddress.empty()) return;
     this->getData().users++;
 }
 Server::Server(const Server& src): IPaddress(src.IPaddress) {
     if(this->IPaddress.empty()) return;
+    this->dataptr = src.dataptr;
     this->getData().users++;
 }
 
@@ -21,11 +22,13 @@ Server& Server::operator=(const Server& src) {
     if(src.IPaddress.empty()) {
         this->~Server();
         this->IPaddress.clear();
+        this->dataptr = nullptr;
         return *this;
     }
-    src.getData().users++;
+    src.dataptr->users++;
     this->~Server();
     this->IPaddress = src.IPaddress;
+    this->dataptr = src.dataptr;
     return *this;
 }
 
@@ -54,18 +57,18 @@ void Server::removeExec(const std::string& filename) const noexcept {
     std::lock_guard lock(serverData.mut);
     serverData.executables.erase(filename);
 }
-Server::Executable& Server::sendExec(const std::string& filename) const {
-    if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::sendExec)");
+void Server::sendExec(const std::string& filename) const {
+    if(this->IPaddress.empty()) return;
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
-    const std::unordered_map<std::string, Server::Executable>::iterator iter = serverData.executables.find(filename);
-    return (iter!=serverData.executables.cend()) ? iter->second : serverData.executables.emplace(filename, std::move(Server::Executable(this->IPaddress, filename))).first->second;
+    if(serverData.executables.find(filename)!=serverData.executables.cend()) return;
+    serverData.executables.emplace(filename, std::move(Server::Executable(this->IPaddress, filename)));
 }
-Server::Executable& Server::sendExecOverwrite(const std::string& filename) const {
-    if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::sendExecOverwrite)");
+void Server::sendExecOverwrite(const std::string& filename) const {
+    if(this->IPaddress.empty()) return;
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
-    return serverData.executables[filename] = Server::Executable(this->IPaddress, filename);
+    serverData.executables[filename] = Server::Executable(this->IPaddress, filename);
 }
 bool Server::containsExecutable(const std::string& filename) const {
     if(this->IPaddress.empty()) return false;
@@ -82,7 +85,8 @@ Server::Executable& Server::getExecutable(const std::string& filename) const {
 
 std::string Server::runExec(const std::string& filename, const std::string& stdin_str) {
     if(this->IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::runExec)");
-    const std::string stdout_str = this->sendExec(filename)(stdin_str);
+    this->sendExec(filename);
+    const std::string stdout_str = this->getExecutable(filename)(stdin_str);
     this->getData().numThreads--;
     return stdout_str;
 }
@@ -92,18 +96,7 @@ std::size_t Server::getNumJobs() const noexcept {
 }
 
 Server::data& Server::getData() const noexcept {
-    static std::mutex datamut; // initalization is thread safe
-
-    // servers was initially a static member of the class Server,
-    // but it was the victim of the Static Initialization Order Fiasco.
-    // to fix this, its a static variable only accessible by this function.
-    // so now it is only initalized when it is first required
-    // long story short, this prevents a Floating Point Exception error.
-
-    static std::unordered_map<std::string, Server::data> servers;
-
-    std::lock_guard lock(datamut);
-    return servers[this->IPaddress];
+    return *(this->dataptr);
 }
 
 std::future<std::string> Server::runExecAsync(const std::string& filename, const std::string& stdin_str) {
