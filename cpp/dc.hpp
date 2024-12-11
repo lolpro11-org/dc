@@ -3,6 +3,5 @@
 
 #include "src/Client.hpp"
 #include "src/Server.hpp"
-#include "src/serialize.hpp"
 
 #endif
