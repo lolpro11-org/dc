@@ -9,13 +9,6 @@ Server::Server(const Server& src): dataptr(src.dataptr) {}
 
 Server& Server::operator=(const Server& src) {
     if(this==&src) return *this;
-    if(*this == src) return *this; // optimization to prevent locking the mutex
-    if(src.getData().IPaddress.empty()) {
-        this->~Server();
-        this->dataptr = nullptr;
-        return *this;
-    }
-    this->~Server();
     this->dataptr = src.dataptr;
     return *this;
 }
@@ -40,13 +33,13 @@ void Server::sendExec(const std::string& filename) const {
     if(serverData.IPaddress.empty()) return;
     std::lock_guard lock(serverData.mut);
     if(serverData.executables.find(filename)!=serverData.executables.cend()) return;
-    serverData.executables.emplace(filename, std::move(Server::Executable(serverData.IPaddress, filename)));
+    serverData.executables.emplace(filename, std::move(Executable(serverData.IPaddress, filename)));
 }
 void Server::sendExecOverwrite(const std::string& filename) const {
     Server::data& serverData = this->getData();
     if(serverData.IPaddress.empty()) return;
     std::lock_guard lock(serverData.mut);
-    serverData.executables[filename] = Server::Executable(serverData.IPaddress, filename);
+    serverData.executables[filename] = Executable(serverData.IPaddress, filename);
 }
 bool Server::containsExecutable(const std::string& filename) const {
     Server::data& serverData = this->getData();
@@ -54,7 +47,7 @@ bool Server::containsExecutable(const std::string& filename) const {
     std::lock_guard lock(serverData.mut);
     return (serverData.executables.find(filename)!=serverData.executables.cend());
 }
-Server::Executable& Server::getExecutable(const std::string& filename) const {
+Executable& Server::getExecutable(const std::string& filename) const {
     Server::data& serverData = this->getData();
     if(serverData.IPaddress.empty()) throw std::invalid_argument("method called on an invalid Server object (Server::getExecutable)");
     std::lock_guard lock(serverData.mut);
@@ -93,10 +86,10 @@ std::future<std::string> Server::runExecAsync(const std::string& filename, const
 
 
 
-Server::Executable::Executable() noexcept: valid(false) {}
-Server::Executable::Executable(const std::string& ip, const std::string& filename) {
+Executable::Executable() noexcept: valid(false) {}
+Executable::Executable(const std::string& ip, const std::string& filename) {
     // readFile may throw std::runtime_error, and only std::runtime_error
-    const std::pair<const uint8_t*, std::size_t> fileBuffer = Server::Executable::readFile(filename);
+    const std::pair<const uint8_t*, std::size_t> fileBuffer = Executable::readFile(filename);
     try {
         this->handle = RustString(c_send_binary(ip.c_str(), fileBuffer.first, fileBuffer.second)).cpp_str();
         this->IPaddress = ip;
@@ -107,27 +100,30 @@ Server::Executable::Executable(const std::string& ip, const std::string& filenam
         throw;
     }
 }
-Server::Executable::Executable(Server::Executable&& src) noexcept {
+Executable::Executable(Executable&& src) noexcept {
     this->IPaddress = std::move(src.IPaddress);
     this->handle = std::move(src.handle);
     this->valid = src.valid;
     src.valid = false;
 }
-Server::Executable& Server::Executable::operator=(Server::Executable&& src) noexcept {
+Executable& Executable::operator=(Executable&& src) noexcept {
     if(this==&src) return *this;
-    this->~Executable();
+    this->cleanup();
     this->handle = std::move(src.handle);
     this->IPaddress = std::move(src.IPaddress);
     this->valid = src.valid;
     src.valid = false;
     return *this;
 }
-Server::Executable::~Executable() noexcept {
+void Executable::cleanup() noexcept {
     if(!(this->valid)) return;
     this->valid = false;
     RustString(c_remove_binary(this->IPaddress.c_str(), this->handle.c_str()));
 }
-std::string Server::Executable::operator()(const std::string stdin_str) const {
+Executable::~Executable() noexcept {
+    this->cleanup();
+}
+std::string Executable::operator()(const std::string stdin_str) const {
     if(!(this->valid)) return "";
     std::size_t stdoutLength = 0;
     std::size_t stdoutCap = 0;
@@ -141,31 +137,31 @@ std::string Server::Executable::operator()(const std::string stdin_str) const {
         throw;
     }
 }
-Server::Executable::operator bool() const noexcept {
+Executable::operator bool() const noexcept {
     return this->valid;
 }
 
-std::pair<const uint8_t*, std::size_t> Server::Executable::readFile(const std::string& filename) {
+std::pair<const uint8_t*, std::size_t> Executable::readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
     if(!file.is_open()) {
-        throw std::runtime_error("could not open file (Server::readFile)");
+        throw std::runtime_error("could not open file (Executable::readFile)");
     }
     std::size_t size;
     try {
         std::streampos endpos = file.tellg();
-        if(endpos<0) throw std::runtime_error("error calculating file size (Server::readFile)");
+        if(endpos<0) throw std::runtime_error("error calculating file size (Executable::readFile)");
         size = (std::size_t)endpos;
         file.seekg(0, std::ios::beg);
     } catch(...) {
-        throw std::runtime_error("could not calculate file size (Server::readFile)");
+        throw std::runtime_error("could not calculate file size (Executable::readFile)");
     }
     uint8_t* buffer = nullptr;
     try {
         buffer = new uint8_t[size];
     } catch(const std::bad_alloc& except) {
-        throw std::runtime_error("could not read file, new threw std::bad_alloc (Server::readFile)");
+        throw std::runtime_error("could not read file, new threw std::bad_alloc (Executable::readFile)");
     } catch(...) {
-        throw std::runtime_error("new threw an unknown exception (Server::readFile)");
+        throw std::runtime_error("new threw an unknown exception (Executable::readFile)");
     }
     try {
         file.read((char*)buffer, size);
@@ -173,7 +169,7 @@ std::pair<const uint8_t*, std::size_t> Server::Executable::readFile(const std::s
         return std::pair<const uint8_t*, std::size_t>((const uint8_t*)buffer, size);
     } catch(...) {
         delete[] buffer;
-        throw std::runtime_error("error reading file (Server::readFile)");
+        throw std::runtime_error("error reading file (Executable::readFile)");
     }
 }
 
@@ -181,4 +177,7 @@ std::pair<const uint8_t*, std::size_t> Server::Executable::readFile(const std::s
 
 
 
+
+
 Server::data::data(const std::string& ip): IPaddress(ip) {}
+
