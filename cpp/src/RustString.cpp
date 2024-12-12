@@ -24,7 +24,8 @@ RustString::~RustString() noexcept {
 const char* RustString::c_str() const noexcept {
     return this->str;
 }
-// may throw as it calls the C++ string constructor
+
+// may throw std::bad_alloc or std::length_error
 std::string RustString::cpp_str() const {
     return std::string(this->valid() ? this->c_str() : "");
 }

@@ -7,9 +7,9 @@
 
 class Executable {
     private:
+    bool valid;
     std::string IPaddress;
     std::string handle;
-    bool valid;
 
     static std::pair<const uint8_t*, std::size_t> readFile(const std::string&);
 
@@ -41,10 +41,12 @@ class Server {
 
     public:
 
-    Server() = default;
+    operator bool() const noexcept;
+
+    Server() noexcept = default;
     Server(const std::string&);
-    Server(const Server&);
-    Server& operator=(const Server&);
+    Server(const Server&) noexcept;
+    Server& operator=(const Server&) noexcept;
     ~Server() noexcept = default;
     std::size_t getNumJobs() const noexcept;
     void sendExec(const std::string&) const;
@@ -60,8 +62,17 @@ class Server {
 };
 
 class Server::data {
-    public:
+    friend class Server;
 
+    private:
+
+    const std::string IPaddress;
+    std::atomic<std::size_t> numThreads;
+    std::mutex mut;
+    std::unordered_map<std::string, Executable> executables; // filenames, executable handles
+
+    public:
+    
     data(const std::string&);
     ~data() noexcept = default;
 
@@ -69,12 +80,6 @@ class Server::data {
     data(data&&) = delete;
     data& operator=(const data&) = delete;
     data& operator=(data&&) = delete;
-
-    const std::string IPaddress;
-    std::atomic<std::size_t> users;
-    std::atomic<std::size_t> numThreads;
-    std::mutex mut;
-    std::unordered_map<std::string, Executable> executables; // filenames, executable handles
 };
 
 #endif
