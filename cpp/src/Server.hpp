@@ -4,14 +4,13 @@
 #include <string>
 #include <future>
 #include <unordered_map>
+#include "RustString.hpp"
 
 class Executable {
     private:
     bool valid;
     std::string IPaddress;
-    std::string handle;
-
-    static std::pair<const uint8_t*, std::size_t> readFile(const std::string&);
+    RustString handle;
 
     public:
 

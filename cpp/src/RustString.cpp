@@ -1,7 +1,7 @@
 #include "RustString.hpp"
 #include "../../my_header.h"
 
-constexpr RustString::RustString() noexcept: str(nullptr) {}
+RustString::RustString() noexcept: str(nullptr) {}
 
 RustString::RustString(const char* rstr) noexcept: str(rstr) {}
 RustString::RustString(RustString&& ruststr) noexcept: str(ruststr.str) {

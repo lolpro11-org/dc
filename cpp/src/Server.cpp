@@ -1,6 +1,14 @@
 #include "Server.hpp"
 
 #include <fstream>
+#include <sys/mman.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+
 #include "../../my_header.h"
 #include "RustString.hpp"
 
@@ -127,16 +135,40 @@ std::future<std::string> Server::runExecAsync(const std::string& filename, const
 Executable::Executable() noexcept: valid(false), IPaddress(), handle() {}
 // may throw std::bad_alloc and std::runtime_error (note that std::bad_alloc can be thrown by the string copy constructors)
 Executable::Executable(const std::string& ip, const std::string& filename): valid(false), IPaddress(ip), handle() {
-    // readFile may throw std::runtime_error, and std::bad_alloc
-    const std::pair<const uint8_t*, std::size_t> fileBuffer = Executable::readFile(filename);
-    try {
-        this->handle = RustString(c_send_binary(ip.c_str(), fileBuffer.first, fileBuffer.second)).cpp_str();
-        this->valid = true;
-        delete[] fileBuffer.first;
-    } catch(...) {
-        delete[] fileBuffer.first;
-        throw;
+    // Open the file
+    const int fd = open(filename.c_str(), O_RDONLY);
+    if(fd == -1) {
+        throw std::runtime_error("failed to open file (Executable::Executable)");
     }
+
+    struct stat sb;
+    // Get the file size
+    if(fstat(fd, &sb) == -1) {
+        close(fd);
+        throw std::runtime_error("failed to read file size (Executable::Executable)");
+    }
+
+    // Map the file into memory
+    void*const addr = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if(addr == MAP_FAILED) {
+        close(fd);
+        throw std::runtime_error("failed to map file to memory (Executable::Executable)");
+    }
+
+    // access contents
+    // RustString construction won't throw
+    this->handle = std::move(RustString(c_send_binary(ip.c_str(), (const uint8_t*)addr, sb.st_size)));
+    this->valid = true;
+    
+    // Unmap the file
+    if(munmap(addr, sb.st_size) == -1) {
+        close(fd);
+        this->~Executable(); // its in a valid state to be destructed as needed (throw won't destruct unless the constructor finishes)
+        throw std::runtime_error("failed to unmap file from memory (Executable::Executable)");
+    }
+
+    // Close the file
+    close(fd);
 }
 // move construction of string members should never throw
 Executable::Executable(Executable&& src) noexcept: valid(src.valid), IPaddress(std::move(src.IPaddress)), handle(std::move(src.handle)) {
@@ -180,39 +212,6 @@ std::string Executable::operator()(const std::string stdin_str) const {
 
 Executable::operator bool() const noexcept {
     return this->valid;
-}
-
-// can throw both std::runtime_error and std::bad_alloc
-std::pair<const uint8_t*, std::size_t> Executable::readFile(const std::string& filename) {
-    std::ifstream file(filename, std::ios::binary | std::ios::ate);
-    if(!file.is_open()) {
-        throw std::runtime_error("could not open file (Executable::readFile)");
-    }
-    std::size_t size;
-    try {
-        std::streampos endpos = file.tellg();
-        if(endpos<0) throw std::runtime_error("error calculating file size (Executable::readFile)");
-        size = (std::size_t)endpos;
-        file.seekg(0, std::ios::beg);
-    } catch(...) {
-        throw std::runtime_error("could not calculate file size (Executable::readFile)");
-    }
-    uint8_t* buffer = nullptr;
-    try {
-        buffer = new uint8_t[size];
-    } catch(const std::bad_alloc& except) {
-        throw; // rethrow bad_alloc
-    } catch(...) {
-        throw std::runtime_error("new threw an unknown exception (Executable::readFile)");
-    }
-    try {
-        file.read((char*)buffer, size);
-        // the file is closed when the destructor is called, and it avoids exceptions
-        return std::pair<const uint8_t*, std::size_t>((const uint8_t*)buffer, size);
-    } catch(...) {
-        delete[] buffer;
-        throw std::runtime_error("error reading file (Executable::readFile)");
-    }
 }
 
 

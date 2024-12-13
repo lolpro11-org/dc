@@ -9,7 +9,7 @@ class RustString {
 
     public:
     bool valid() const noexcept;
-    constexpr RustString() noexcept;
+    RustString() noexcept;
     RustString(const char*) noexcept;
     RustString(RustString&&) noexcept;
     ~RustString() noexcept;
