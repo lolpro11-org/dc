@@ -49,7 +49,8 @@ Server& Client::leastConnections() noexcept {
     return machines[minIter];
 }
 
-// may thro
+// may throw: std::bad_alloc, std::out_of_range, and std::system_error
+// calling get on the future may throw: std::bad_alloc, std::runtime_error
 std::future<std::string> Client::distributeAndRun(const std::string& filename, const std::string& stdin_str) {
     return leastConnections().runExecAsync(filename, stdin_str);
 }

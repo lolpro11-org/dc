@@ -35,41 +35,66 @@ void Server::removeExec(const std::string& filename) const noexcept {
     std::lock_guard lock(serverData.mut);
     serverData.executables.erase(filename);
 }
-// may throw std::bad_alloc unknown exceptions from std::unordered_map::emplace
+// may throw std::bad_alloc and std::runtime_error
 void Server::sendExec(const std::string& filename) const {
     if(this->dataptr == nullptr) return;
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
-    if(serverData.executables.find(filename)!=serverData.executables.cend()) return;
-    serverData.executables.emplace(filename, std::move(Executable(serverData.IPaddress, filename)));
+    try {
+        if(serverData.executables.find(filename)!=serverData.executables.cend()) return;
+        serverData.executables.emplace(filename, std::move(Executable(serverData.IPaddress, filename)));
+    } catch(const std::bad_alloc& except) {
+        throw;
+    } catch(const std::runtime_error& except) {
+        throw;
+    } catch(...) {
+        throw std::runtime_error("unknown exception thrown by std::unordered_map::find or std::unordered_map::emplace (Server::sendExec)");
+    }
 }
-// may throw std::bad_alloc, unknown exceptions from std::unordered_map::insert_or_assign
+// may throw std::bad_alloc and std::runtime_error
 void Server::sendExecOverwrite(const std::string& filename) const {
     if(this->dataptr == nullptr) return;
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
-    serverData.executables.insert_or_assign(filename, std::move(Executable(serverData.IPaddress, filename)));
+    try {
+        serverData.executables.insert_or_assign(filename, std::move(Executable(serverData.IPaddress, filename)));
+    } catch(const std::bad_alloc& except) {
+        throw;
+    } catch(const std::runtime_error& except) {
+        throw;
+    } catch(...) {
+        throw std::runtime_error("unknown exception thrown by std::unordered_map::insert_or_assign (Server::sendExecOverwrite)");
+    }
 }
-// may throw, unknown exceptions
+// may throw std::runtime_error
 bool Server::containsExecutable(const std::string& filename) const {
     if(this->dataptr == nullptr) return false;
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
     // const reference is to force it to use the const qualified version of std::unordered_map::find (might improve performance?)
     const std::unordered_map<std::string, Executable>& execs = serverData.executables;
-    return (execs.find(filename)!=execs.cend());
+    try {
+        return (execs.find(filename)!=execs.cend());
+    } catch(...) {
+        throw std::runtime_error("unknown exception thrown by std::unordered_map::find (Server::containsExecutable)");
+    }
 }
-// may throw std::runtime_error, unknown exceptions
+// may throw std::runtime_error
 Executable& Server::getExecutable(const std::string& filename) const {
     if(this->dataptr == nullptr) throw std::runtime_error("method called on an invalid Server object (Server::getExecutable)");
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
-    std::unordered_map<std::string, Executable>::iterator iter = serverData.executables.find(filename);
-    if (iter==serverData.executables.cend()) throw std::runtime_error("executable not found in Server (Server::getExecutable)");
+    std::unordered_map<std::string, Executable>::iterator iter;
+    try {
+        iter = serverData.executables.find(filename);
+    } catch(...) {
+        throw std::runtime_error("unknown exception thrown by std::unordered_map::find (Server::getExecutable)");
+    }
+    if(iter==serverData.executables.cend()) throw std::runtime_error("executable not found in Server (Server::getExecutable)");
     return iter->second;
 }
 
-// could throw std::bad_alloc, std::runtime_error, unknown exceptions
+// could throw std::bad_alloc, std::runtime_error
 std::string Server::runExec(const std::string& filename, const std::string& stdin_str) {
     if(this->dataptr == nullptr) throw std::runtime_error("method called on an invalid Server object (Server::runExec)");
     ScopeCounter count(this->getData().numThreads); // useful for try-catch blocks
@@ -86,7 +111,7 @@ Server::data& Server::getData() const noexcept {
 }
 
 // may throw: std::bad_alloc, and std::system_error
-// calling get on the future may throw: std::bad_alloc, std::runtime_error, unknown exceptions
+// calling get on the future may throw: std::bad_alloc, std::runtime_error
 std::future<std::string> Server::runExecAsync(const std::string& filename, const std::string& stdin_str) {
     if(this->dataptr == nullptr) throw std::runtime_error("method called on an invalid Server object (Server::runExecAsync)");
     else return std::async(std::launch::async, &Server::runExec, *this, filename, stdin_str);
