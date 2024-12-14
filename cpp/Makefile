@@ -12,11 +12,9 @@ Client.o:
 	g++ -c src/Client.cpp $(FLAGS) -o bin/Client.o
 Server.o:
 	g++ -c src/Server.cpp $(FLAGS) -o bin/Server.o
-RustString.o:
-	g++ -c src/RustString.cpp $(FLAGS) -o bin/RustString.o
-libdc_cpp.a: libdc.a RustString.o Server.o Client.o
+libdc_cpp.a: libdc.a Server.o Client.o
 	cp ../target/release/libdc.a libdc_cpp.a
-	ar r libdc_cpp.a bin/RustString.o bin/Server.o bin/Client.o
+	ar r libdc_cpp.a bin/Server.o bin/Client.o
 clean:
 	rm bin/*
 	rm libdc_cpp.a
