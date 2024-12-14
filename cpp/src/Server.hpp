@@ -50,11 +50,11 @@ class Server {
     std::size_t getNumJobs() const noexcept;
     void sendExec(const std::string&) const;
     void sendExecOverwrite(const std::string&) const;
-    void removeExec(const std::string&) const noexcept;
+    void removeExec(const std::string&) const;
     bool containsExecutable(const std::string&) const;
     Executable& getExecutable(const std::string&) const;
-    std::string runExec(const std::string& filename, const std::string& stdin_str = "");
-    std::future<std::string> runExecAsync(const std::string&, const std::string&);
+    std::string runExec(const std::string& filename, const std::string& stdin_str = "") const;
+    std::future<std::string> runExecAsync(const std::string& filename, const std::string& stdin_str = "") const;
     
     bool operator==(const Server&) const noexcept;
     bool operator!=(const Server&) const noexcept;

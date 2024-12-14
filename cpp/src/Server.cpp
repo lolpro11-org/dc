@@ -3,7 +3,6 @@
 #include <fstream>
 #include <sys/mman.h>
 #include <stdlib.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -25,10 +24,12 @@ Server& Server::operator=(const Server& src) noexcept {
     return *this;
 }
 
+// only compares dataptr, does not compare the actual server data
 bool Server::operator==(const Server& rhs) const noexcept {
     return (this->dataptr == rhs.dataptr);
 }
 
+// only compares dataptr, does not compare the actual server data
 bool Server::operator!=(const Server& rhs) const noexcept {
     return !(*this == rhs);
 }
@@ -37,11 +38,15 @@ Server::operator bool() const noexcept {
     return (this->dataptr != nullptr);
 }
 
-void Server::removeExec(const std::string& filename) const noexcept {
+void Server::removeExec(const std::string& filename) const {
     if(this->dataptr == nullptr) return;
     Server::data& serverData = this->getData();
     std::lock_guard lock(serverData.mut);
-    serverData.executables.erase(filename);
+    try {
+        serverData.executables.erase(filename);
+    } catch(...) {
+        throw std::runtime_error("unknown exception thrown by std::unordered_map::erase (Server::removeExec)");
+    }
 }
 // may throw std::bad_alloc and std::runtime_error
 void Server::sendExec(const std::string& filename) const {
@@ -103,7 +108,7 @@ Executable& Server::getExecutable(const std::string& filename) const {
 }
 
 // could throw std::bad_alloc, std::runtime_error
-std::string Server::runExec(const std::string& filename, const std::string& stdin_str) {
+std::string Server::runExec(const std::string& filename, const std::string& stdin_str) const {
     if(this->dataptr == nullptr) throw std::runtime_error("method called on an invalid Server object (Server::runExec)");
     ScopeCounter count(this->getData().numThreads); // useful for try-catch blocks
     this->sendExec(filename);
@@ -114,13 +119,14 @@ std::size_t Server::getNumJobs() const noexcept {
     return (this->dataptr == nullptr) ? 0 : this->getData().numThreads.load();
 }
 
+// should only be called when dataptr is valid
 Server::data& Server::getData() const noexcept {
     return *(this->dataptr);
 }
 
 // may throw: std::bad_alloc, and std::system_error
 // calling get on the future may throw: std::bad_alloc, std::runtime_error
-std::future<std::string> Server::runExecAsync(const std::string& filename, const std::string& stdin_str) {
+std::future<std::string> Server::runExecAsync(const std::string& filename, const std::string& stdin_str) const {
     if(this->dataptr == nullptr) throw std::runtime_error("method called on an invalid Server object (Server::runExecAsync)");
     else return std::async(std::launch::async, &Server::runExec, *this, filename, stdin_str);
 }
