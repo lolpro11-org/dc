@@ -47,6 +47,28 @@ fn get_charge_from_char(c: char) -> f64 {
     }
 }
 
+async fn execute_binary(systems: Vec<&str>, sys_num: usize, filename: String, binary_name: String, args: Vec<String>) {
+    let sys = systems[sys_num];
+    let server = tarpc::serde_transport::tcp::connect(format!("{}:9010", sys), Json::default).await.unwrap();
+    let client = DCClient::new(client::Config::default(), server).spawn();
+    let mut ctx = context::current();
+    ctx.deadline = Instant::now() + Duration::from_secs(10 * 60);
+    let filename_cloned = filename.clone();
+    let binding = client.execute_binary(ctx, binary_name.clone(), args.clone(), vec![]).await;
+    if binding.is_err() {
+        let mut new_systems = systems;
+        new_systems.remove(sys_num);
+        Box::pin(async move {
+            execute_binary(new_systems.clone(), (sys_num + 1) % new_systems.len() - 1, filename.clone(), binary_name, args).await;
+        }).await;
+        return;
+    };
+
+    let mut file = File::create(&filename_cloned).await.unwrap();
+    println!("Writing to file: {}", filename_cloned);
+    file.write_all(binding.unwrap().as_bytes()).await.unwrap();
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let systems = vec!["192.168.1.21", "192.168.1.22", "192.168.1.23", "192.168.1.24"];
@@ -204,19 +226,14 @@ async fn main() -> io::Result<()> {
             println!("Search_width {}", search_width);
             let num_batches = (n * search_width * (2 - self_collisions as i64) + threads_per_batch - 1) / threads_per_batch;
             for batch in 0..num_batches {
-                let sys = systems[batch as usize % systems.len()];
-                let binary_name = binary_names[batch as usize % systems.len()].clone();
+                let sys_num = batch as usize % systems.len();
+                let binary_name = binary_names[sys_num].clone();
                 let filename = format!("collide{}{}n{}.txt", first, second, batch);
                 let filename_clone = filename.clone();
-
+                let systems = systems.clone();
                 let fut = async move {
-                    let server = tarpc::serde_transport::tcp::connect(format!("{}:9010", sys), Json::default).await.unwrap();
-                    let client = DCClient::new(client::Config::default(), server).spawn();
-                    let mut ctx = context::current();
-                    ctx.deadline = Instant::now() + Duration::from_secs(10 * 60);
-
-                    let binding = client.execute_binary(ctx, binary_name, [
-                        filename_clone.clone(), 
+                    execute_binary(systems, sys_num, filename.clone(), binary_name, [
+                        filename.clone(), 
                         format!("{}/{}sorted.txt", std::env::current_dir().unwrap().to_str().unwrap(), first), 
                         format!("{}/{}sorted.txt", std::env::current_dir().unwrap().to_str().unwrap(), second), 
                         get_mass_from_char(first.chars().next().unwrap()).to_string(),
@@ -226,11 +243,7 @@ async fn main() -> io::Result<()> {
                         c.to_string(), dt.to_string(), (batch % 2).to_string(), search_width.to_string(),
                         n.to_string(), batch.to_string(), threads_per_block.to_string(), blocks_per_batch.to_string(),
                         collision_pair.to_string()
-                    ].to_vec(), vec![]).await.unwrap();
-
-                    let mut file = File::create(&filename_clone).await.unwrap();
-                    println!("Writing to file: {}", filename_clone);
-                    file.write_all(binding.as_bytes()).await.unwrap();
+                    ].to_vec()).await;
                 };
 
                 futs.push(task::spawn(fut));
@@ -238,7 +251,7 @@ async fn main() -> io::Result<()> {
                     outputs.push(futs.next().await.unwrap());
                 }
 
-                filenames.push(filename);
+                filenames.push(filename_clone);
             }
         }
 
