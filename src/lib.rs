@@ -170,7 +170,8 @@ pub extern "C" fn c_execute_binary(
     count: usize,
     stdin_input: *const u8,
     stdin_len: usize,
-    out_len: *mut usize
+    out_len: *mut usize,
+    out_cap: *mut usize
 ) -> *const u8 {
     let result = panic::catch_unwind(|| {
         // Convert `args` from C to Rust's Vec<String>
@@ -196,6 +197,7 @@ pub extern "C" fn c_execute_binary(
     };
 
     unsafe { *out_len = binary_data.len() };
+    unsafe { *out_cap = binary_data.capacity() };
     binary_data.leak().as_ptr()
 }
 
